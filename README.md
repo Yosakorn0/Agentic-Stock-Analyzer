@@ -56,6 +56,8 @@ python stock_scanner.py --save
 ```
 
 #### Option B: Modular Files (For Custom Development)
+
+**Standard Version (Sequential Processing):**
 ```bash
 # Scan all stocks (tech + rising)
 python -m scanners.agentic_scanner
@@ -72,6 +74,27 @@ python -m scanners.agentic_scanner --limit 20
 # Save results to JSON file
 python -m scanners.agentic_scanner --save
 ```
+
+**With Parallel Processing (Faster for Multiple Stocks):**
+```python
+from scanners import AgenticStockScanner
+
+# Initialize with parallel processing
+scanner = AgenticStockScanner(parallel=True, max_workers=5)
+
+# Scan all stocks in parallel
+results = scanner.scan_stocks(focus="all", period="3mo", parallel=True)
+
+# Print recommendations
+scanner.print_recommendations(limit=10)
+```
+
+**Or use CLI with parallel flag:**
+```bash
+python -m scanners.agentic_scanner --parallel --workers 5
+```
+
+**Note:** Parallel processing significantly speeds up analysis when scanning many stocks, but uses more API rate limit quota. Use `max_workers` to control concurrency.
 
 **Note**: `stock_scanner.py` is a single combined file with all functionality. Use it if you want everything in one place. The separate files (`agentic_scanner.py`, `ai_analyzer.py`, etc.) are for modular use.
 
@@ -113,6 +136,66 @@ scanner.print_recommendations()
 
 ### Use Individual Components
 
+#### Getting Trading Signals
+
+There are **three ways** to use `get_current_signals()`:
+
+**Option 1: Run the technical analyzer directly**
+```bash
+python core/analysis/technical_analyzer.py
+```
+This runs a built-in example analyzing AAPL stock.
+
+**Option 2: Import and use in your own script** (Recommended for customization)
+```python
+from core.analysis import get_current_signals, calculate_all_indicators
+from core.data import fetch_stock_data
+from utils.format_signals import print_signals  # Optional: for formatted output
+
+# Fetch stock data
+df = fetch_stock_data("AAPL", period="3mo")
+
+# Calculate all indicators first
+df_with_indicators = calculate_all_indicators(df)
+
+# Get current signals
+signals = get_current_signals(df_with_indicators)
+
+# Option A: Print formatted (recommended)
+print_signals(signals, "AAPL")
+
+# Option B: Access raw dictionary
+print(signals)  # Returns: RSI, trend, price changes, MACD signal, etc.
+```
+
+Or use the comprehensive examples file:
+```bash
+# Get trading signals for a single stock
+python examples/usage_examples.py signals
+
+# Run full scanner (sequential)
+python examples/usage_examples.py scan
+
+# Run full scanner (parallel - faster)
+python examples/usage_examples.py parallel
+
+# Custom analysis template
+python examples/usage_examples.py custom
+
+# Run all examples
+python examples/usage_examples.py all
+```
+
+**Option 3: Use through the full scanner**
+The `get_current_signals()` function is used internally by the full scanner:
+```bash
+python stock_scanner.py
+# or
+python -m scanners.agentic_scanner
+```
+
+#### Complete Example: Individual Components
+
 ```python
 from core.data import get_tech_stocks, get_stock_info
 from core.analysis import calculate_all_indicators, get_current_signals, StockAIAnalyzer
@@ -145,7 +228,7 @@ print(f"Confidence: {analysis['confidence']}%")
 
 ## 📁 Project Structure
 
-The project is organized into a modular structure for easy expansion and maintenance:
+The project is organized into a clean modular structure for easy expansion and maintenance:
 
 ```
 ai-stock-scanner/
@@ -155,11 +238,12 @@ ai-stock-scanner/
 │
 ├── scanners/               # Scanner implementations and orchestrators
 │   ├── __init__.py        # Package initialization - exports AgenticStockScanner
-│   └── agentic_scanner.py # Main orchestrator class that coordinates all modules
+│   └── agentic_scanner.py # Unified orchestrator class
+│                           #    - Supports both sequential and parallel processing
 │                           #    - Initializes AI analyzer and screener
 │                           #    - Manages the scanning workflow
-│                           #    - Compiles and formats results
-│                           #    - Provides CLI interface
+│                           #    - Set parallel=True for faster multi-stock analysis
+│                           #    - Provides CLI interface with --parallel flag
 │
 ├── core/                   # Core modules - reusable components
 │   │
@@ -214,6 +298,21 @@ ai-stock-scanner/
 │                           #    - screen_buy_opportunities(): Filter by buy signals
 │                           #    - comprehensive_screen(): Multi-criteria screening
 │                           #    - add_filter(): Add custom filter functions
+│
+├── examples/               # Example scripts and usage demonstrations
+│   ├── __init__.py        # Package initialization
+│   └── usage_examples.py  # Comprehensive examples
+│                           #    - Get trading signals for single stock
+│                           #    - Full scanner (sequential)
+│                           #    - Full scanner (parallel)
+│                           #    - Custom analysis template
+│                           #    Run: python examples/usage_examples.py [mode]
+│
+├── utils/                  # Utility functions and helpers
+│   ├── __init__.py        # Package initialization - exports utility functions
+│   └── format_signals.py  # Helper functions for formatting trading signals output
+│                           #    - format_signals(): Format signals dict to string
+│                           #    - print_signals(): Print formatted signals directly
 │
 ├── requirements.txt        # Python dependencies:
 │                           #    - pandas: Data manipulation
