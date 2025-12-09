@@ -387,6 +387,7 @@ def generate_buy_recommendation(df: pd.DataFrame, signals: Dict) -> Dict:
     entry_price_reason = None
     stop_loss = None
     take_profit = None
+    risk_reward_ratio = None  # Initialize to avoid UnboundLocalError
     
     if recommendation in ['BUY', 'CONSIDER BUY']:
         # Strategy 1: If near demand zone, buy at or slightly above demand zone
