@@ -12,6 +12,7 @@ from .technical_analyzer import (
     calculate_price_change,
     calculate_volume_indicators,
     analyze_trend,
+    identify_demand_supply_zones,
     calculate_all_indicators,
     get_current_signals
 )
@@ -30,6 +31,8 @@ __all__ = [
     'calculate_price_change',
     'calculate_volume_indicators',
     'analyze_trend',
+    'identify_demand_supply_zones',
+    'generate_buy_recommendation',
     'calculate_all_indicators',
     'get_current_signals',
     # AI analysis

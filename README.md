@@ -9,6 +9,9 @@ An intelligent AI-powered system that scans tech stocks and rising stocks to ide
 - **Smart Screening**: Filters stocks by tech sector, rising momentum, oversold conditions, and more
 - **Real-Time Scanning**: Scans multiple stocks simultaneously with rate limiting
 - **Buy Recommendations**: Generates actionable buy/sell/wait recommendations with confidence scores
+- **Entry Price Suggestions**: Provides specific buy prices based on demand zones and technical analysis
+- **Demand & Supply Zones**: Identifies key support (demand) and resistance (supply) levels
+- **Risk Management**: Suggests stop-loss and take-profit levels with risk/reward ratios
 - **Risk Assessment**: Evaluates upside potential and risk levels for each opportunity
 
 ## 🚀 Quick Start
@@ -405,7 +408,20 @@ Filters and screens stocks based on various criteria. Works with analysis result
 
 **Analysis Functions**:
 - `analyze_trend(df)` - Determines trend direction (up/down/sideways) and strength (0-100)
+- `identify_demand_supply_zones(df, lookback_period=50)` - Identifies demand (support) and supply (resistance) zones:
+  - Finds swing highs/lows where price bounced significantly
+  - Returns nearest zones above/below current price with distances
+  - Provides list of key support/resistance levels
+  
+- `generate_buy_recommendation(df, signals)` - Generates buy recommendation with entry price:
+  - Analyzes RSI, trend, EMA, MACD, and demand zones to score opportunities (0-100)
+  - Suggests entry price based on demand zones, oversold conditions, or pullbacks
+  - Calculates stop-loss (3% below demand zone or entry)
+  - Calculates take-profit (near supply zone or 8% target)
+  - Provides risk/reward ratio
+  
 - `calculate_all_indicators(df)` - Computes all technical indicators and adds to DataFrame
+  
 - `get_current_signals(df)` - Extracts current trading signals from the most recent data:
   - RSI signal (oversold/overbought/neutral)
   - EMA cross (bullish/bearish)
@@ -413,6 +429,11 @@ Filters and screens stocks based on various criteria. Works with analysis result
   - Bollinger position (upper/middle/lower)
   - Price changes (1d, 5d, 20d)
   - Trend direction and strength
+  - **Demand and supply zones** (nearest zones, distances, full lists)
+  - **Buy recommendation** (BUY/CONSIDER BUY/WATCH/WAIT) with score
+  - **Suggested entry price** with strategy explanation
+  - **Stop-loss and take-profit levels**
+  - **Risk/reward ratio**
 
 **Dependencies**: `pandas`, `numpy`
 

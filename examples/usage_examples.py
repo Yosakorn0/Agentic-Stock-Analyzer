@@ -4,16 +4,18 @@ Comprehensive Usage Examples
 This file demonstrates all common usage patterns for the AI Stock Scanner.
 
 Run from the ai-stock-scanner root directory:
-    python examples/usage_examples.py [mode]
+    python examples/usage_examples.py [mode] [--ticker TICKER] [--tickers TICKER1,TICKER2,...]
 
 Modes:
-    - signals: Get trading signals for a single stock
+    - signals: Get trading signals for a single stock (prompts for ticker)
     - scan: Run full scanner (sequential)
     - parallel: Run full scanner (parallel)
+    - custom: Custom analysis for multiple tickers (prompts for tickers)
 """
 
 import sys
 import os
+from typing import Optional, List
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -23,13 +25,19 @@ from utils.format_signals import print_signals
 from scanners import AgenticStockScanner
 
 
-def example_get_signals():
+def example_get_signals(ticker: Optional[str] = None):
     """Example 1: Get trading signals for a single stock"""
     print("=" * 70)
     print("EXAMPLE 1: Get Trading Signals for a Single Stock")
     print("=" * 70)
     
-    ticker = "JEPQ"  # Change this to any ticker
+    # Get ticker from user input if not provided
+    if ticker is None:
+        ticker = input("\nEnter stock ticker symbol (e.g., AAPL, MSFT, JEPQ): ").strip().upper()
+        if not ticker:
+            print("⚠️ No ticker provided. Using default: AAPL")
+            ticker = "AAPL"
+    
     print(f"\nFetching data for {ticker}...")
     df = fetch_stock_data(ticker, period="3mo")
     
@@ -87,14 +95,22 @@ def example_full_scan_parallel():
     scanner.print_recommendations(limit=10)
 
 
-def example_custom_analysis():
+def example_custom_analysis(tickers: Optional[List[str]] = None):
     """Example 4: Custom analysis script template"""
     print("=" * 70)
     print("EXAMPLE 4: Custom Analysis Template")
     print("=" * 70)
     
-    # Your custom ticker list
-    custom_tickers = ["AAPL", "MSFT", "NVDA", "TSLA"]
+    # Get tickers from user input if not provided
+    if tickers is None:
+        ticker_input = input("\nEnter stock ticker(s) separated by commas (e.g., AAPL,MSFT,NVDA): ").strip().upper()
+        if ticker_input:
+            custom_tickers = [t.strip() for t in ticker_input.split(",") if t.strip()]
+        else:
+            print("⚠️ No tickers provided. Using defaults: AAPL, MSFT, NVDA, TSLA")
+            custom_tickers = ["AAPL", "MSFT", "NVDA", "TSLA"]
+    else:
+        custom_tickers = tickers
     
     print(f"\nAnalyzing custom tickers: {', '.join(custom_tickers)}\n")
     
@@ -126,21 +142,29 @@ def main():
                        choices=['signals', 'scan', 'parallel', 'custom', 'all'],
                        default='signals',
                        help='Example mode to run')
+    parser.add_argument('--ticker', type=str, help='Stock ticker symbol (for signals mode)')
+    parser.add_argument('--tickers', type=str, help='Comma-separated tickers (for custom mode, e.g., AAPL,MSFT,NVDA)')
     
     args = parser.parse_args()
     
     if args.mode == 'signals':
-        example_get_signals()
+        example_get_signals(ticker=args.ticker)
     elif args.mode == 'scan':
         example_full_scan_sequential()
     elif args.mode == 'parallel':
         example_full_scan_parallel()
     elif args.mode == 'custom':
-        example_custom_analysis()
+        tickers = None
+        if args.tickers:
+            tickers = [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
+        example_custom_analysis(tickers=tickers)
     elif args.mode == 'all':
-        example_get_signals()
+        example_get_signals(ticker=args.ticker)
         print("\n\n")
-        example_custom_analysis()
+        tickers = None
+        if args.tickers:
+            tickers = [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
+        example_custom_analysis(tickers=tickers)
     else:
         print("Available modes:")
         print("  signals  - Get trading signals for a single stock")
@@ -148,6 +172,9 @@ def main():
         print("  parallel - Run full scanner (parallel)")
         print("  custom   - Custom analysis template")
         print("  all      - Run all examples")
+        print("\nOptions:")
+        print("  --ticker TICKER     - Specify ticker (for signals mode)")
+        print("  --tickers T1,T2,... - Specify tickers (for custom mode)")
 
 
 if __name__ == "__main__":
