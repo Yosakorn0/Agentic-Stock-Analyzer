@@ -483,30 +483,6 @@ core/analysis/technical_analyzer.py
 core/data/stock_fetcher.py
     └── dependencies → yfinance, pandas
 ```
-
-### Expanding the Codebase
-
-**To add new functionality:**
-
-1. **New Data Source?** → Add to `core/data/`
-   - Create new file like `alternative_data_fetcher.py`
-   - Follow same interface pattern
-   - Export through `core/data/__init__.py`
-
-2. **New Analysis Method?** → Add to `core/analysis/`
-   - Technical indicators → add to `technical_analyzer.py`
-   - AI models → add to `ai_analyzer.py` or create new file
-   - Export through `core/analysis/__init__.py`
-
-3. **New Screening Criteria?** → Add to `core/screening/stock_screener.py`
-   - Add new method to `StockScreener` class
-   - Or create custom filter function
-
-4. **New Scanner?** → Add to `scanners/`
-   - Create new scanner class following `AgenticStockScanner` pattern
-   - Import from core modules
-   - Export through `scanners/__init__.py`
-
 ---
 
 ## 📈 Output Format
@@ -593,17 +569,6 @@ Recommendations include:
 6. **Risk Management**: Always use stop-losses and proper position sizing. Never risk more than you can afford to lose.
 
 7. **404 Errors**: Some stocks (like ANSS, SPLK) may show 404 errors if they're delisted or data is unavailable. These have been removed from the default stock lists.
-
-## 🔒 Disclaimer
-
-**This software is for educational and research purposes only.**
-
-- Trading involves substantial risk of loss
-- Past performance does not guarantee future results
-- AI recommendations are not guarantees
-- Always do your own research
-- Consider consulting with a financial advisor
-- Never trade with money you cannot afford to lose
 
 ## 📝 License
 
