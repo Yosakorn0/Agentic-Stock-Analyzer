@@ -11,6 +11,8 @@ An intelligent AI-powered system that scans tech stocks and rising stocks to ide
 - **Buy Recommendations**: Generates actionable buy/sell/wait recommendations with confidence scores
 - **Entry Price Suggestions**: Provides specific buy prices based on demand zones and technical analysis
 - **Demand & Supply Zones**: Identifies key support (demand) and resistance (supply) levels
+- **Strong Zone Analysis**: Calculates zone strength based on touches, volume, and bounce/rejection patterns
+- **Gold Scalping Support**: Specialized scalping analysis with intraday intervals (5m, 15m, 30m) and optimal entry/exit prices
 - **Risk Management**: Suggests stop-loss and take-profit levels with risk/reward ratios
 - **Risk Assessment**: Evaluates upside potential and risk levels for each opportunity
 
@@ -189,6 +191,50 @@ python examples/usage_examples.py custom
 python examples/usage_examples.py all
 ```
 
+### Gold Scalping Example
+
+For gold scalping with intraday data and strong zone identification:
+```bash
+python gold_scalping_example.py
+```
+
+**Features:**
+- **Intraday Intervals**: Supports 5m, 15m, 30m intervals for scalping
+- **Strong Zone Identification**: Analyzes demand/supply zones with strength scoring based on:
+  - Number of touches
+  - Recent activity
+  - Volume at zone levels
+  - Bounce/rejection strength
+- **Best Buy/Sell Prices**: Automatically identifies optimal entry/exit points
+- **Risk/Reward Analysis**: Calculates R:R ratios for scalping trades
+- **Quick Scalping Signals**: Provides immediate action recommendations
+
+**Usage:**
+```bash
+# Interactive mode (prompts for ticker and interval)
+python gold_scalping_example.py
+
+# Or use programmatically
+from gold_scalping_example import gold_scalping
+
+# Analyze GLD with 5-minute candles
+signals = gold_scalping(ticker="GLD", interval="5m", period="5d")
+
+# Analyze gold futures with 15-minute candles
+signals = gold_scalping(ticker="GC=F", interval="15m", period="1mo")
+```
+
+**Supported Gold Tickers:**
+- `GLD`: Gold ETF (recommended, most reliable)
+- `GC=F`: Gold Futures (may have market hours restrictions)
+
+**Output Includes:**
+- 🔥 **Strong Demand & Supply Zones** with strength ratings (VERY STRONG, STRONG, MODERATE, WEAK)
+- 💰 **Best Buy Price** - Optimal entry point based on strongest demand zone
+- 💰 **Best Sell Price** - Optimal exit point based on strongest supply zone
+- 📊 **Scalping Risk/Reward** - Entry, stop-loss, take-profit, and R:R ratio
+- ⚡ **Quick Scalping Signal** - Immediate BUY/WAIT recommendation
+
 **Option 3: Use through the full scanner**
 The `get_current_signals()` function is used internally by the full scanner:
 ```bash
@@ -310,6 +356,13 @@ ai-stock-scanner/
 │                           #    - Full scanner (parallel)
 │                           #    - Custom analysis template
 │                           #    Run: python examples/usage_examples.py [mode]
+│
+├── gold_scalping_example.py  # Gold scalping with strong zone analysis
+│                              #    - Intraday scalping (5m, 15m, 30m intervals)
+│                              #    - Strong demand/supply zone identification
+│                              #    - Best buy/sell price recommendations
+│                              #    - Risk/reward calculations
+│                              #    Run: python gold_scalping_example.py
 │
 ├── utils/                  # Utility functions and helpers
 │   ├── __init__.py        # Package initialization - exports utility functions
@@ -659,6 +712,10 @@ The scanner returns a dictionary with:
 - `"1d"`: Daily data (recommended for swing trading)
 - `"1h"`: Hourly data (for day trading)
 - `"5m"`: 5-minute data (for scalping)
+- `"15m"`: 15-minute data (for short-term scalping)
+- `"30m"`: 30-minute data (for medium scalping)
+
+**Note**: For scalping with intraday intervals, see `gold_scalping_example.py` which provides specialized zone strength analysis and optimal buy/sell price identification.
 
 ## 🎯 Recommendation Criteria
 
