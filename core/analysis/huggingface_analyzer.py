@@ -18,6 +18,15 @@ import os
 from typing import Dict, Optional
 import warnings
 
+# Load environment variables from .env.local or .env for HF_TOKEN
+try:
+    from dotenv import load_dotenv
+    # Try .env.local first, then fall back to .env
+    load_dotenv('.env.local')
+    load_dotenv('.env')  # Fallback
+except ImportError:
+    pass  # python-dotenv not installed, skip silently
+
 # Suppress warnings for cleaner output
 warnings.filterwarnings("ignore")
 
@@ -45,7 +54,7 @@ class HuggingFaceAnalyzer:
                        Examples:
                        - "mistralai/Mistral-7B-Instruct-v0.2"
                        - "meta-llama/Llama-2-7b-chat-hf"
-                       - "HuggingFaceH4/zephyr-7b-beta"
+                    #    - "HuggingFaceH4/zephyr-7b-beta" # failed
                        - "google/gemma-7b-it"
             use_gpu: Whether to use GPU if available
             max_length: Maximum token length for generation
@@ -59,13 +68,28 @@ class HuggingFaceAnalyzer:
         self.tokenizer = None
         self.model = None
         self.pipeline = None
+        self.is_loaded = False
+        
+        # Check GPU availability
+        if use_gpu and not torch.cuda.is_available():
+            print(f"⚠️ GPU requested but CUDA not available. Using CPU instead.")
+        elif use_gpu:
+            print(f"🚀 GPU available: {torch.cuda.get_device_name(0)}")
         
         try:
             print(f"🤗 Loading Hugging Face model: {model_name}...")
             self._load_model()
+            self.is_loaded = True
         except Exception as e:
-            print(f"⚠️ Warning: Could not load model {model_name}: {e}")
+            error_msg = str(e)
+            if "gated repo" in error_msg.lower() or "401" in error_msg or "restricted" in error_msg.lower():
+                print(f"❌ Model requires Hugging Face authentication: {model_name}")
+                print(f"   Visit https://huggingface.co/{model_name.split('/')[0]}/{model_name.split('/')[1] if '/' in model_name else ''}")
+                print(f"   Then run: huggingface-cli login")
+            else:
+                print(f"❌ Failed to load model {model_name}: {error_msg[:200]}")
             self.model = None
+            self.is_loaded = False
     
     def _load_model(self):
         """Load the Hugging Face model and tokenizer"""
@@ -81,9 +105,14 @@ class HuggingFaceAnalyzer:
                 torch_dtype=torch.float16 if self.use_gpu else torch.float32,
                 trust_remote_code=True
             )
-            print(f"✅ Loaded {self.model_name} on {device}")
+            actual_device = "cuda" if self.use_gpu and torch.cuda.is_available() else "cpu"
+            print(f"✅ Loaded {self.model_name} on {actual_device}")
         except Exception as e:
-            print(f"⚠️ Pipeline loading failed, trying manual load: {e}")
+            error_str = str(e)
+            # Don't try manual load for authentication errors
+            if "gated repo" in error_str.lower() or "401" in error_str or "restricted" in error_str.lower():
+                raise
+            print(f"⚠️ Pipeline loading failed, trying manual load: {error_str[:150]}")
             try:
                 # Fallback to manual loading
                 self.tokenizer = AutoTokenizer.from_pretrained(
@@ -96,9 +125,10 @@ class HuggingFaceAnalyzer:
                     torch_dtype=torch.float16 if self.use_gpu else torch.float32,
                     trust_remote_code=True
                 )
-                print(f"✅ Loaded {self.model_name} on {device}")
+                actual_device = "cuda" if self.use_gpu and torch.cuda.is_available() else "cpu"
+                print(f"✅ Loaded {self.model_name} on {actual_device}")
             except Exception as e2:
-                print(f"❌ Failed to load model: {e2}")
+                print(f"❌ Failed to load model: {str(e2)[:200]}")
                 raise
     
     def analyze_stock(self, ticker: str, stock_info: Dict, technical_signals: Dict,

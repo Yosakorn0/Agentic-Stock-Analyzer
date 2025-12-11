@@ -26,6 +26,11 @@ Thumbs.db
 *.json
 scan_results_*.json
 
+# Environment variables (keep tokens private)
+.env
+.env.local
+.env.*.local
+
 # Personal files (optional - uncomment if you want to ignore user scripts)
 # my_analysis.py
 

@@ -24,6 +24,16 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 
+# Load environment variables from .env.local or .env
+try:
+    from dotenv import load_dotenv
+    # Try .env.local first, then fall back to .env
+    env_loaded = load_dotenv('.env.local') or load_dotenv('.env')
+    if env_loaded:
+        print("✅ Loaded environment variables from .env file")
+except ImportError:
+    pass  # python-dotenv not installed, skip silently
+
 # Import scanner components
 try:
     from stock_scanner import AgenticStockScanner, StockAIAnalyzer, fetch_multiple_stocks, get_all_stocks, get_tech_stocks, get_rising_stocks
@@ -36,13 +46,22 @@ except ImportError:
     from core.analysis.technical_analyzer import calculate_all_indicators, get_current_signals
     from core.data.stock_fetcher import get_stock_info
 
-# Import Hugging Face analyzer
-try:
-    from core.analysis.huggingface_analyzer import HuggingFaceAnalyzer, RECOMMENDED_MODELS
-    HUGGINGFACE_ANALYZER_AVAILABLE = True
-except ImportError:
-    HUGGINGFACE_ANALYZER_AVAILABLE = False
-    print("⚠️ Warning: Hugging Face analyzer not available. Install with: pip install transformers torch")
+# Import Hugging Face analyzer (lazy import to avoid slow startup)
+HUGGINGFACE_ANALYZER_AVAILABLE = None
+HuggingFaceAnalyzer = None
+RECOMMENDED_MODELS = None
+
+def _load_huggingface_if_needed():
+    """Lazy load Hugging Face modules only when needed"""
+    global HUGGINGFACE_ANALYZER_AVAILABLE, HuggingFaceAnalyzer, RECOMMENDED_MODELS
+    if HUGGINGFACE_ANALYZER_AVAILABLE is None:
+        try:
+            from core.analysis.huggingface_analyzer import HuggingFaceAnalyzer, RECOMMENDED_MODELS
+            HUGGINGFACE_ANALYZER_AVAILABLE = True
+        except ImportError:
+            HUGGINGFACE_ANALYZER_AVAILABLE = False
+            print("⚠️ Warning: Hugging Face analyzer not available. Install with: pip install transformers torch")
+    return HUGGINGFACE_ANALYZER_AVAILABLE
 
 # Preset model bundles
 PRESET_MODELS = {
@@ -64,6 +83,11 @@ PRESET_MODELS = {
     ],
     # OpenAI only (fast setup)
     "openai-only": ["gpt-4o-mini", "gpt-4", "gpt-3.5-turbo"],
+    # Open HF models (no authentication required)
+    "open-hf": [
+        "gpt-4o-mini", "gpt-3.5-turbo",
+        "hf:mistral-7b", "hf:zephyr-7b", "hf:finance-chat"
+    ],
 }
 
 
@@ -92,34 +116,80 @@ class MultiAIAnalyzer:
         self.use_gpu = use_gpu
         self.analyzers = {}
         
-        # Initialize analyzers for each model
-        for model in models:
+        # Check GPU availability if requested
+        if use_gpu:
+            print("🔍 Checking GPU availability...", end=" ", flush=True)
             try:
-                if model.startswith('hf:') or '/' in model:
-                    # Hugging Face model
-                    if not HUGGINGFACE_ANALYZER_AVAILABLE:
-                        print(f"⚠️ Warning: Hugging Face analyzer not available, skipping {model}")
-                        continue
-                    
-                    # Extract model name (remove 'hf:' prefix if present)
-                    hf_model_name = model.replace('hf:', '', 1)
-                    
-                    # Check if it's a shortcut
-                    if hf_model_name in RECOMMENDED_MODELS:
-                        hf_model_name = RECOMMENDED_MODELS[hf_model_name]
-                        print(f"📦 Using recommended model: {hf_model_name}")
-                    
-                    self.analyzers[model] = HuggingFaceAnalyzer(
-                        model_name=hf_model_name,
-                        use_gpu=self.use_gpu
-                    )
-                    print(f"✅ Initialized Hugging Face model: {model} ({hf_model_name})")
+                import torch
+                if torch.cuda.is_available():
+                    print(f"✅ GPU detected: {torch.cuda.get_device_name(0)} ({torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f}GB)")
                 else:
-                    # OpenAI model
-                    self.analyzers[model] = StockAIAnalyzer(api_key=self.api_key, model=model)
-                    print(f"✅ Initialized OpenAI model: {model}")
+                    print(f"❌ CUDA not available. Using CPU instead.")
+                    self.use_gpu = False
+            except ImportError:
+                print(f"❌ PyTorch not installed. GPU support unavailable.")
+                self.use_gpu = False
+        
+        # Initialize analyzers - OpenAI first (fast), then Hugging Face (slow)
+        print("\n🔧 Initializing AI models...")
+        
+        # First, initialize OpenAI models (fast)
+        openai_models = [m for m in models if not (m.startswith('hf:') or '/' in m)]
+        hf_models = [m for m in models if m.startswith('hf:') or '/' in m]
+        
+        for model in openai_models:
+            try:
+                print(f"   ⏳ Initializing {model}...", end=" ", flush=True)
+                self.analyzers[model] = StockAIAnalyzer(api_key=self.api_key, model=model)
+                print(f"✅")
             except Exception as e:
-                print(f"⚠️ Warning: Could not initialize {model}: {e}")
+                print(f"❌ Error: {str(e)[:100]}")
+        
+        # Then initialize Hugging Face models (can be slow, especially first time)
+        if hf_models:
+            if not _load_huggingface_if_needed():
+                print(f"⚠️ Warning: Hugging Face analyzer not available, skipping all HF models")
+            else:
+                print(f"\n📦 Loading Hugging Face models...")
+                print(f"   ⚠️  Note: First-time downloads can take 10-30+ minutes (models are 2-14GB each)")
+                print(f"   ⚠️  Subsequent runs will be much faster (models are cached locally)")
+                print()
+                for idx, model in enumerate(hf_models, 1):
+                    try:
+                        print(f"   [{idx}/{len(hf_models)}] ⏳ Loading {model}...", flush=True)
+                        
+                        # Extract model name (remove 'hf:' prefix if present)
+                        hf_model_name = model.replace('hf:', '', 1)
+                        
+                        # Check if it's a shortcut
+                        if RECOMMENDED_MODELS and hf_model_name in RECOMMENDED_MODELS:
+                            hf_model_name = RECOMMENDED_MODELS[hf_model_name]
+                            print(f"       📦 Using: {hf_model_name}")
+                        
+                        hf_analyzer = HuggingFaceAnalyzer(
+                            model_name=hf_model_name,
+                            use_gpu=self.use_gpu
+                        )
+                        # Only add if model actually loaded successfully
+                        if hf_analyzer.is_loaded:
+                            self.analyzers[model] = hf_analyzer
+                            print(f"       ✅ Successfully loaded")
+                        else:
+                            print(f"       ❌ Failed to load")
+                    except Exception as e:
+                        print(f"       ❌ Error: {str(e)[:150]}")
+        
+        print()
+        
+        # Final summary
+        print(f"\n📊 Successfully initialized {len(self.analyzers)}/{len(models)} models")
+        if len(self.analyzers) == 0:
+            print("❌ Error: No models were successfully initialized!")
+            print("   For Hugging Face models requiring authentication, run: huggingface-cli login")
+            return
+        if len(self.analyzers) < len(models):
+            print(f"⚠️ {len(models) - len(self.analyzers)} model(s) failed to load and were skipped")
+        print()
     
     def analyze_stock_multi_ai(
         self,
@@ -781,7 +851,9 @@ Examples:
   
   # Use preset bundles
   python multi_ai_scanner.py --preset diversified-6
-  python multi_ai_scanner.py --preset finance-wide --use-gpu
+  python multi_ai_scanner.py --preset openai-only  # Fast, no downloads
+  python multi_ai_scanner.py --preset open-hf  # Open models, no auth needed
+  python multi_ai_scanner.py --preset finance-wide --use-gpu  # Requires HF auth for some models
   
   # Use specific Hugging Face model
   python multi_ai_scanner.py --models hf:mistralai/Mistral-7B-Instruct-v0.2
@@ -810,7 +882,7 @@ Examples:
         '--preset',
         type=str,
         choices=list(PRESET_MODELS.keys()),
-        help='Use a preset bundle of models (e.g., diversified-6, finance-wide, openai-only)'
+        help='Use a preset bundle: openai-only (fastest), open-hf (no auth), diversified-6, finance-wide (requires HF auth)'
     )
     
     parser.add_argument(
