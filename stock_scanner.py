@@ -915,7 +915,21 @@ class AgenticStockScanner:
             )
             
             analysis_results[ticker] = analysis
-            print(f"✅ {analysis.get('recommendation', 'WAIT')} ({analysis.get('confidence', 0)}%)")
+            
+            # Choose icon based on recommendation
+            recommendation = analysis.get('recommendation', 'WAIT')
+            confidence = analysis.get('confidence', 0)
+            
+            if recommendation == 'BUY':
+                icon = '🟢'
+            elif recommendation == 'CONSIDER BUY':
+                icon = '🟡'
+            elif recommendation == 'WATCH':
+                icon = '🟠'
+            else:  # WAIT
+                icon = '🔴'
+            
+            print(f"{icon} {recommendation} ({confidence}%)")
             
             time.sleep(0.2)  # Rate limiting for API
         

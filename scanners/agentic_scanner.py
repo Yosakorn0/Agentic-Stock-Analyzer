@@ -217,7 +217,18 @@ class AgenticStockScanner:
                         analysis_results[ticker_result] = analysis
                         recommendation = analysis.get('recommendation', 'WAIT')
                         confidence = analysis.get('confidence', 0)
-                        print(f"  [{completed}/{total}] {ticker_result}: {recommendation} ({confidence}%)")
+                        
+                        # Choose icon based on recommendation
+                        if recommendation == 'BUY':
+                            icon = '🟢'
+                        elif recommendation == 'CONSIDER BUY':
+                            icon = '🟡'
+                        elif recommendation == 'WATCH':
+                            icon = '🟠'
+                        else:  # WAIT
+                            icon = '🔴'
+                        
+                        print(f"  [{completed}/{total}] {ticker_result}: {icon} {recommendation} ({confidence}%)")
                     except Exception as e:
                         print(f"  ⚠️ Error with {ticker}: {str(e)}")
         else:
@@ -231,7 +242,21 @@ class AgenticStockScanner:
                     price_data_summary=price_summary
                 )
                 analysis_results[ticker] = analysis
-                print(f"✅ {analysis.get('recommendation', 'WAIT')} ({analysis.get('confidence', 0)}%)")
+                
+                # Choose icon based on recommendation
+                recommendation = analysis.get('recommendation', 'WAIT')
+                confidence = analysis.get('confidence', 0)
+                
+                if recommendation == 'BUY':
+                    icon = '🟢'
+                elif recommendation == 'CONSIDER BUY':
+                    icon = '🟡'
+                elif recommendation == 'WATCH':
+                    icon = '🟠'
+                else:  # WAIT
+                    icon = '🔴'
+                
+                print(f"{icon} {recommendation} ({confidence}%)")
                 time.sleep(0.2)  # Rate limiting for API
         
         print(f"\n✅ Completed AI analysis for {len(analysis_results)} stocks\n")

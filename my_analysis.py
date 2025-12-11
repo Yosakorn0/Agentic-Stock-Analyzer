@@ -3,10 +3,13 @@ from core.data import fetch_stock_data
 from utils.format_signals import print_signals
 
 # Get ticker from user input
-ticker = input("Enter stock ticker symbol (e.g., AAPL, MSFT, JEPQ): ").strip().upper()
+import re
+ticker_raw = input("Enter stock ticker symbol (e.g., AAPL, MSFT, JEPQ): ").strip()
+# Remove any non-alphanumeric characters except dots, hyphens, and equals (for futures like GC=F)
+ticker = re.sub(r'[^A-Za-z0-9.\-=]', '', ticker_raw).upper()
 
 if not ticker:
-    print("⚠️ No ticker provided. Using default: AAPL")
+    print("⚠️ No valid ticker provided. Using default: AAPL")
     ticker = "AAPL"
 
 # Fetch and analyze
