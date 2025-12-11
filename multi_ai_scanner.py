@@ -703,11 +703,11 @@ def display_multi_ai_results(results: List[Dict], min_score: int, min_consensus:
                     print(f"      Strategy: {entry_reason}")
                 
                 if stop_loss:
-                    stop_loss_pct = ((current_price - stop_loss) / current_price) * 100 if current_price > 0 else 0
+                    stop_loss_pct = ((price - stop_loss) / price) * 100 if price > 0 else 0
                     print(f"      Stop Loss: ${stop_loss:,.2f} ({abs(stop_loss_pct):.2f}% below current)")
                 
                 if take_profit:
-                    take_profit_pct = ((take_profit - current_price) / current_price) * 100 if current_price > 0 else 0
+                    take_profit_pct = ((take_profit - price) / price) * 100 if price > 0 else 0
                     print(f"      Take Profit: ${take_profit:,.2f} ({take_profit_pct:.2f}% above current)")
                 
                 if risk_reward:
@@ -720,12 +720,12 @@ def display_multi_ai_results(results: List[Dict], min_score: int, min_consensus:
                         print(f"      ⚠️  Low R:R ratio - consider tighter stop or higher target")
                 
                 # Show price difference
-                if entry_price < current_price:
-                    discount = ((current_price - entry_price) / current_price) * 100
-                    print(f"      💡 Entry is ${current_price - entry_price:.2f} ({discount:.2f}%) below current - wait for pullback")
-                elif entry_price > current_price:
-                    premium = ((entry_price - current_price) / current_price) * 100
-                    print(f"      ⚠️  Entry is ${entry_price - current_price:.2f} ({premium:.2f}%) above current - may need to wait")
+                if entry_price < price:
+                    discount = ((price - entry_price) / price) * 100
+                    print(f"      💡 Entry is ${price - entry_price:.2f} ({discount:.2f}%) below current - wait for pullback")
+                elif entry_price > price:
+                    premium = ((entry_price - price) / price) * 100
+                    print(f"      ⚠️  Entry is ${entry_price - price:.2f} ({premium:.2f}%) above current - may need to wait")
                 else:
                     print(f"      ✅ Entry at current price is reasonable")
         
