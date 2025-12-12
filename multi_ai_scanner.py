@@ -742,6 +742,10 @@ def scan_multi_ai(
     analysis_start = time.time()
     print(f"🤖 Analyzing with {len(multi_ai.analyzers)} AI models in parallel...")
     high_confidence_buys = []
+    all_results = []  # Store all results when specific tickers requested
+    
+    # If specific tickers requested, show all analysis regardless of threshold
+    show_all_analysis = tickers is not None and len(tickers) <= 5  # Show all if 5 or fewer tickers
     
     for ticker, df in tqdm(stocks_with_indicators.items(), desc="   AI Analysis", unit="stock", ncols=100):
         ticker_start = time.time()
@@ -783,11 +787,17 @@ def scan_multi_ai(
         ticker_time = time.time() - ticker_start
         tqdm.write(f"   {icon} {ticker}: {recommendation} ({confidence:.1f}%, {agreement:.0f}% consensus) [{ticker_time:.1f}s]")
         
-        # Only include if meets criteria
+        # Always store result with full data
+        result['stock_info'] = stock_info
+        result['technical_signals'] = signals
+        
+        # Include in high confidence list if meets criteria
         if recommendation in ['BUY', 'CONSIDER BUY'] and confidence >= min_score and agreement >= min_consensus:
-            result['stock_info'] = stock_info
-            result['technical_signals'] = signals
             high_confidence_buys.append(result)
+        
+        # If specific tickers requested, include all results for detailed display
+        if show_all_analysis:
+            all_results.append(result)
         
         time.sleep(0.2)  # Rate limiting between stocks
     
@@ -796,7 +806,8 @@ def scan_multi_ai(
     print(f"\n✅ Found {len(high_confidence_buys)} stocks meeting criteria")
     print(f"⏱️  Analysis completed in {analysis_time:.2f}s (Total scan time: {total_time:.2f}s)\n")
     
-    return high_confidence_buys
+    # Return all results if specific tickers requested, otherwise just high confidence
+    return all_results if show_all_analysis else high_confidence_buys
 
 
 def display_multi_ai_results(results: List[Dict], min_score: int, min_consensus: float):
@@ -810,11 +821,23 @@ def display_multi_ai_results(results: List[Dict], min_score: int, min_consensus:
         print(f"  - Agreement >= {min_consensus}%")
         return
     
+    # Check if we have results below threshold (means specific tickers were requested)
+    high_confidence_count = sum(1 for r in results 
+                               if r['consensus'].get('confidence', 0) >= min_score 
+                               and r['consensus'].get('agreement_percentage', 0) >= min_consensus
+                               and r['consensus'].get('recommendation', 'WAIT') in ['BUY', 'CONSIDER BUY'])
+    
+    show_all = len(results) > 0 and high_confidence_count < len(results)
+    
     # Sort by confidence (highest first)
     results.sort(key=lambda x: x['consensus'].get('confidence', 0), reverse=True)
     
     print("\n" + "=" * 80)
-    print(f"✅ FOUND {len(results)} HIGH CONFIDENCE BUYS (Multi-AI Consensus)")
+    if show_all:
+        print(f"📊 DETAILED ANALYSIS FOR {len(results)} STOCK(S) (Multi-AI Consensus)")
+        print(f"   ({high_confidence_count} meet high-confidence criteria)")
+    else:
+        print(f"✅ FOUND {len(results)} HIGH CONFIDENCE BUYS (Multi-AI Consensus)")
     print("=" * 80)
     print()
     
@@ -876,9 +899,15 @@ def display_multi_ai_results(results: List[Dict], min_score: int, min_consensus:
         elif confidence >= 70:
             icon = "🟡"
             quality = "VERY GOOD"
-        else:
-            icon = "🟠"
+        elif confidence >= 60:
+            icon = "🟡"
             quality = "GOOD"
+        elif confidence >= 40:
+            icon = "🟠"
+            quality = "LOW CONFIDENCE"
+        else:
+            icon = "🔴"
+            quality = "VERY LOW CONFIDENCE"
         
         print(f"{i}. {icon} {ticker} - {name}")
         print(f"   Sector: {sector}")
@@ -889,39 +918,26 @@ def display_multi_ai_results(results: List[Dict], min_score: int, min_consensus:
         print(f"   ⚠️  Risk: {risk} | 📈 Potential: {upside}")
         print(f"   📝 Reasoning: {reasoning[:250]}..." if len(reasoning) > 250 else f"   📝 Reasoning: {reasoning}")
         
-        # Display entry price recommendations if BUY or CONSIDER BUY
-        if recommendation in ['BUY', 'CONSIDER BUY']:
-            entry_price = consensus.get('suggested_entry_price')
-            stop_loss = consensus.get('stop_loss')
-            take_profit = consensus.get('take_profit')
-            risk_reward = consensus.get('risk_reward_ratio')
-            entry_reason = consensus.get('entry_price_reason')
+        # Always display entry price recommendations (especially important for WAIT recommendations)
+        entry_price = consensus.get('suggested_entry_price')
+        stop_loss = consensus.get('stop_loss')
+        take_profit = consensus.get('take_profit')
+        risk_reward = consensus.get('risk_reward_ratio')
+        entry_reason = consensus.get('entry_price_reason')
+        
+        if entry_price or stop_loss or take_profit:
+            print()
+            if recommendation in ['BUY', 'CONSIDER BUY']:
+                print(f"   💰 ENTRY PRICE RECOMMENDATION:")
+            else:
+                print(f"   💰 PRICE LEVELS & RISK MANAGEMENT:")
             
             if entry_price:
-                print()
-                print(f"   💰 ENTRY PRICE RECOMMENDATION:")
-                print(f"      Entry Price: ${entry_price:,.2f}")
+                print(f"      Suggested Entry: ${entry_price:,.2f}")
                 if entry_reason:
                     print(f"      Strategy: {entry_reason}")
                 
-                if stop_loss:
-                    stop_loss_pct = ((price - stop_loss) / price) * 100 if price > 0 else 0
-                    print(f"      Stop Loss: ${stop_loss:,.2f} ({abs(stop_loss_pct):.2f}% below current)")
-                
-                if take_profit:
-                    take_profit_pct = ((take_profit - price) / price) * 100 if price > 0 else 0
-                    print(f"      Take Profit: ${take_profit:,.2f} ({take_profit_pct:.2f}% above current)")
-                
-                if risk_reward:
-                    print(f"      Risk/Reward Ratio: 1:{risk_reward:.2f}")
-                    if risk_reward >= 2.0:
-                        print(f"      ✅ Excellent R:R ratio for trading!")
-                    elif risk_reward >= 1.5:
-                        print(f"      ✅ Good R:R ratio")
-                    else:
-                        print(f"      ⚠️  Low R:R ratio - consider tighter stop or higher target")
-                
-                # Show price difference
+                # Show price difference from current
                 if entry_price < price:
                     discount = ((price - entry_price) / price) * 100
                     print(f"      💡 Entry is ${price - entry_price:.2f} ({discount:.2f}%) below current - wait for pullback")
@@ -930,6 +946,25 @@ def display_multi_ai_results(results: List[Dict], min_score: int, min_consensus:
                     print(f"      ⚠️  Entry is ${entry_price - price:.2f} ({premium:.2f}%) above current - may need to wait")
                 else:
                     print(f"      ✅ Entry at current price is reasonable")
+            
+            if stop_loss:
+                stop_loss_pct = ((price - stop_loss) / price) * 100 if price > 0 else 0
+                print(f"      Stop Loss: ${stop_loss:,.2f} ({abs(stop_loss_pct):.2f}% below current)")
+                if recommendation == 'WAIT':
+                    print(f"      ⚠️  If holding, consider setting stop loss to limit downside")
+            
+            if take_profit:
+                take_profit_pct = ((take_profit - price) / price) * 100 if price > 0 else 0
+                print(f"      Take Profit Target: ${take_profit:,.2f} ({take_profit_pct:.2f}% above current)")
+            
+            if risk_reward:
+                print(f"      Risk/Reward Ratio: 1:{risk_reward:.2f}")
+                if risk_reward >= 2.0:
+                    print(f"      ✅ Excellent R:R ratio for trading!")
+                elif risk_reward >= 1.5:
+                    print(f"      ✅ Good R:R ratio")
+                else:
+                    print(f"      ⚠️  Low R:R ratio - consider tighter stop or higher target")
         
         print()
         
