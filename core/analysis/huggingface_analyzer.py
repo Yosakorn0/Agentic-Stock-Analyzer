@@ -45,7 +45,7 @@ class HuggingFaceAnalyzer:
     """
     
     def __init__(self, model_name: str = "mistralai/Mistral-7B-Instruct-v0.2", 
-                 use_gpu: bool = False, max_length: int = 512):
+                 use_gpu: bool = False, max_length: int = 512, quiet: bool = False):
         """
         Initialize Hugging Face analyzer
         
@@ -58,6 +58,7 @@ class HuggingFaceAnalyzer:
                        - "google/gemma-7b-it"
             use_gpu: Whether to use GPU if available
             max_length: Maximum token length for generation
+            quiet: If True, suppress loading messages (useful when using progress bars)
         """
         if not HUGGINGFACE_AVAILABLE:
             raise ImportError("transformers library required. Install with: pip install transformers torch")
@@ -69,67 +70,177 @@ class HuggingFaceAnalyzer:
         self.model = None
         self.pipeline = None
         self.is_loaded = False
+        self.quiet = quiet
         
         # Check GPU availability
-        if use_gpu and not torch.cuda.is_available():
-            print(f"⚠️ GPU requested but CUDA not available. Using CPU instead.")
-        elif use_gpu:
-            print(f"🚀 GPU available: {torch.cuda.get_device_name(0)}")
+        if not quiet:
+            if use_gpu and not torch.cuda.is_available():
+                print(f"⚠️ GPU requested but CUDA not available. Using CPU instead.")
+            elif use_gpu:
+                print(f"🚀 GPU available: {torch.cuda.get_device_name(0)}")
         
         try:
-            print(f"🤗 Loading Hugging Face model: {model_name}...")
+            if not quiet:
+                print(f"🤗 Loading Hugging Face model: {model_name}...")
             self._load_model()
             self.is_loaded = True
         except Exception as e:
             error_msg = str(e)
-            if "gated repo" in error_msg.lower() or "401" in error_msg or "restricted" in error_msg.lower():
-                print(f"❌ Model requires Hugging Face authentication: {model_name}")
-                print(f"   Visit https://huggingface.co/{model_name.split('/')[0]}/{model_name.split('/')[1] if '/' in model_name else ''}")
-                print(f"   Then run: huggingface-cli login")
-            else:
-                print(f"❌ Failed to load model {model_name}: {error_msg[:200]}")
+            if not quiet:
+                if "gated repo" in error_msg.lower() or "401" in error_msg or "restricted" in error_msg.lower():
+                    print(f"❌ Model requires Hugging Face authentication: {model_name}")
+                    print(f"   Visit https://huggingface.co/{model_name.split('/')[0]}/{model_name.split('/')[1] if '/' in model_name else ''}")
+                    print(f"   Then run: huggingface-cli login")
+                else:
+                    print(f"❌ Failed to load model {model_name}: {error_msg[:200]}")
             self.model = None
             self.is_loaded = False
     
     def _load_model(self):
         """Load the Hugging Face model and tokenizer"""
-        device = "cuda" if self.use_gpu else "cpu"
+        from contextlib import redirect_stdout, redirect_stderr
+        from io import StringIO
+        
+        device = "cuda" if self.use_gpu and torch.cuda.is_available() else "cpu"
+        
+        # Suppress transformers output if quiet mode
+        old_env = {}
+        old_level = None
+        if self.quiet:
+            # Set environment variables to suppress progress
+            for key in ['TRANSFORMERS_VERBOSITY', 'HF_HUB_DISABLE_PROGRESS_BARS']:
+                old_env[key] = os.environ.get(key)
+                os.environ[key] = 'error' if key == 'TRANSFORMERS_VERBOSITY' else '1'
+            
+            # Also suppress via logging
+            try:
+                from transformers.utils import logging
+                old_level = logging.get_verbosity()
+                logging.set_verbosity_error()
+            except (ImportError, AttributeError):
+                pass
         
         try:
-            # Try to load as a text generation pipeline (easier to use)
-            self.pipeline = pipeline(
-                "text-generation",
-                model=self.model_name,
-                tokenizer=self.model_name,
-                device_map="auto" if self.use_gpu else None,
-                torch_dtype=torch.float16 if self.use_gpu else torch.float32,
-                trust_remote_code=True
-            )
+            # Redirect stdout/stderr if quiet mode to suppress all output
+            if self.quiet:
+                f_stdout = StringIO()
+                f_stderr = StringIO()
+                with redirect_stdout(f_stdout), redirect_stderr(f_stderr):
+                    # Try to load as a text generation pipeline (easier to use)
+                    pipeline_kwargs = {
+                        "model": self.model_name,
+                        "tokenizer": self.model_name,
+                        "trust_remote_code": True,
+                        "low_cpu_mem_usage": True,
+                    }
+                    
+                    # Set device and dtype
+                    if self.use_gpu and torch.cuda.is_available():
+                        pipeline_kwargs["device"] = 0  # Use first GPU
+                        pipeline_kwargs["dtype"] = torch.float16
+                    else:
+                        pipeline_kwargs["dtype"] = torch.float32
+                    
+                    self.pipeline = pipeline("text-generation", **pipeline_kwargs)
+            else:
+                # Try to load as a text generation pipeline (easier to use)
+                pipeline_kwargs = {
+                    "model": self.model_name,
+                    "tokenizer": self.model_name,
+                    "trust_remote_code": True,
+                    "low_cpu_mem_usage": True,
+                }
+                
+                # Set device and dtype
+                if self.use_gpu and torch.cuda.is_available():
+                    pipeline_kwargs["device"] = 0  # Use first GPU
+                    pipeline_kwargs["dtype"] = torch.float16
+                else:
+                    pipeline_kwargs["dtype"] = torch.float32
+                
+                self.pipeline = pipeline("text-generation", **pipeline_kwargs)
+            
             actual_device = "cuda" if self.use_gpu and torch.cuda.is_available() else "cpu"
-            print(f"✅ Loaded {self.model_name} on {actual_device}")
+            if not self.quiet:
+                print(f"Device set to use {actual_device}")
+                print(f"✅ Loaded {self.model_name} on {actual_device}")
         except Exception as e:
             error_str = str(e)
             # Don't try manual load for authentication errors
             if "gated repo" in error_str.lower() or "401" in error_str or "restricted" in error_str.lower():
                 raise
-            print(f"⚠️ Pipeline loading failed, trying manual load: {error_str[:150]}")
+            if not self.quiet:
+                print(f"⚠️ Pipeline loading failed, trying manual load: {error_str[:150]}")
             try:
                 # Fallback to manual loading
-                self.tokenizer = AutoTokenizer.from_pretrained(
-                    self.model_name,
-                    trust_remote_code=True
-                )
-                self.model = AutoModelForCausalLM.from_pretrained(
-                    self.model_name,
-                    device_map="auto" if self.use_gpu else None,
-                    torch_dtype=torch.float16 if self.use_gpu else torch.float32,
-                    trust_remote_code=True
-                )
+                if self.quiet:
+                    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                        self.tokenizer = AutoTokenizer.from_pretrained(
+                            self.model_name,
+                            trust_remote_code=True
+                        )
+                        
+                        model_kwargs = {
+                            "trust_remote_code": True,
+                            "low_cpu_mem_usage": True,
+                        }
+                        
+                        # Set device and dtype
+                        if self.use_gpu and torch.cuda.is_available():
+                            model_kwargs["device_map"] = "auto"
+                            model_kwargs["dtype"] = torch.float16
+                        else:
+                            model_kwargs["dtype"] = torch.float32
+                        
+                        self.model = AutoModelForCausalLM.from_pretrained(
+                            self.model_name,
+                            **model_kwargs
+                        )
+                else:
+                    self.tokenizer = AutoTokenizer.from_pretrained(
+                        self.model_name,
+                        trust_remote_code=True
+                    )
+                    
+                    model_kwargs = {
+                        "trust_remote_code": True,
+                        "low_cpu_mem_usage": True,
+                    }
+                    
+                    # Set device and dtype
+                    if self.use_gpu and torch.cuda.is_available():
+                        model_kwargs["device_map"] = "auto"
+                        model_kwargs["dtype"] = torch.float16
+                    else:
+                        model_kwargs["dtype"] = torch.float32
+                    
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        self.model_name,
+                        **model_kwargs
+                    )
+                
                 actual_device = "cuda" if self.use_gpu and torch.cuda.is_available() else "cpu"
-                print(f"✅ Loaded {self.model_name} on {actual_device}")
+                if not self.quiet:
+                    print(f"Device set to use {actual_device}")
+                    print(f"✅ Loaded {self.model_name} on {actual_device}")
             except Exception as e2:
-                print(f"❌ Failed to load model: {str(e2)[:200]}")
+                if not self.quiet:
+                    print(f"❌ Failed to load model: {str(e2)[:200]}")
                 raise
+        finally:
+            # Restore environment and logging if we modified them
+            if self.quiet and old_env:
+                for key, value in old_env.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+                if old_level is not None:
+                    try:
+                        from transformers.utils import logging
+                        logging.set_verbosity(old_level)
+                    except (ImportError, AttributeError):
+                        pass
     
     def analyze_stock(self, ticker: str, stock_info: Dict, technical_signals: Dict,
                      price_data_summary: Dict) -> Dict:

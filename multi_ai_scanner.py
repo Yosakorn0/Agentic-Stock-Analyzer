@@ -24,6 +24,75 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 
+# Try to import tqdm for progress bars, fallback to simple progress if not available
+try:
+    from tqdm import tqdm
+    TQDM_AVAILABLE = True
+except ImportError:
+    TQDM_AVAILABLE = False
+    # Simple progress bar fallback
+    class tqdm:
+        def __init__(self, iterable=None, total=None, desc="", unit="", ncols=100, **kwargs):
+            self.iterable = iterable
+            self.total = total or (len(iterable) if iterable else None)
+            self.desc = desc
+            self.unit = unit
+            self.current = 0
+            self.start_time = time.time()
+            if self.iterable:
+                self.iterable = iter(self.iterable)
+        
+        def __iter__(self):
+            return self
+        
+        def __next__(self):
+            if self.iterable:
+                try:
+                    item = next(self.iterable)
+                    self.current += 1
+                    self._update()
+                    return item
+                except StopIteration:
+                    self._finish()
+                    raise
+            else:
+                raise StopIteration
+        
+        def update(self, n=1):
+            self.current += n
+            self._update()
+        
+        def _update(self):
+            if self.total:
+                percent = (self.current / self.total) * 100
+                elapsed = time.time() - self.start_time
+                if self.current > 0:
+                    rate = self.current / elapsed
+                    eta = (self.total - self.current) / rate if rate > 0 else 0
+                    bar_length = 30
+                    filled = int(bar_length * self.current / self.total)
+                    bar = '█' * filled + '░' * (bar_length - filled)
+                    print(f"\r{self.desc}: [{bar}] {self.current}/{self.total} ({percent:.1f}%) "
+                          f"| Elapsed: {elapsed:.1f}s | ETA: {eta:.1f}s", end='', flush=True)
+        
+        def _finish(self):
+            elapsed = time.time() - self.start_time
+            print(f"\r{self.desc}: [{'█' * 30}] {self.current}/{self.total} (100.0%) "
+                  f"| Elapsed: {elapsed:.1f}s | Complete!{' ' * 20}")
+        
+        def __enter__(self):
+            return self
+        
+        def __exit__(self, *args):
+            self._finish()
+    
+    # Add write function for tqdm compatibility
+    def tqdm_write(s, file=None, end="\n"):
+        """Write function for tqdm compatibility"""
+        print(s, end=end, file=file, flush=True)
+    
+    tqdm.write = tqdm_write
+
 # Load environment variables from .env.local or .env
 try:
     from dotenv import load_dotenv
@@ -84,9 +153,9 @@ PRESET_MODELS = {
     # OpenAI only (fast setup)
     "openai-only": ["gpt-4o-mini", "gpt-4", "gpt-3.5-turbo"],
     # Open HF models (no authentication required)
+    # Lightweight open models (single HF model to reduce load)
     "open-hf": [
-        "gpt-4o-mini", "gpt-3.5-turbo",
-        "hf:mistral-7b", "hf:zephyr-7b", "hf:finance-chat"
+        "hf:mistral-7b"
     ],
 }
 
@@ -96,7 +165,8 @@ class MultiAIAnalyzer:
     Analyzes stocks using multiple AI models in parallel and creates consensus
     """
     
-    def __init__(self, models: List[str] = None, api_key: Optional[str] = None, use_gpu: bool = False):
+    def __init__(self, models: List[str] = None, api_key: Optional[str] = None, use_gpu: bool = False,
+                 parallel_models: bool = True):
         """
         Initialize multi-AI analyzer
         
@@ -115,6 +185,7 @@ class MultiAIAnalyzer:
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self.use_gpu = use_gpu
         self.analyzers = {}
+        self.parallel_models = parallel_models
         
         # Check GPU availability if requested
         if use_gpu:
@@ -131,58 +202,95 @@ class MultiAIAnalyzer:
                 self.use_gpu = False
         
         # Initialize analyzers - OpenAI first (fast), then Hugging Face (slow)
+        init_start = time.time()
         print("\n🔧 Initializing AI models...")
         
         # First, initialize OpenAI models (fast)
         openai_models = [m for m in models if not (m.startswith('hf:') or '/' in m)]
         hf_models = [m for m in models if m.startswith('hf:') or '/' in m]
         
-        for model in openai_models:
-            try:
-                print(f"   ⏳ Initializing {model}...", end=" ", flush=True)
-                self.analyzers[model] = StockAIAnalyzer(api_key=self.api_key, model=model)
-                print(f"✅")
-            except Exception as e:
-                print(f"❌ Error: {str(e)[:100]}")
+        if openai_models:
+            print(f"   📡 Initializing {len(openai_models)} OpenAI model(s)...")
+            for model in tqdm(openai_models, desc="   OpenAI models", unit="model", ncols=100, leave=False):
+                try:
+                    self.analyzers[model] = StockAIAnalyzer(api_key=self.api_key, model=model)
+                except Exception as e:
+                    tqdm.write(f"   ❌ {model}: {str(e)[:100]}")
         
         # Then initialize Hugging Face models (can be slow, especially first time)
         if hf_models:
             if not _load_huggingface_if_needed():
                 print(f"⚠️ Warning: Hugging Face analyzer not available, skipping all HF models")
             else:
-                print(f"\n📦 Loading Hugging Face models...")
+                print(f"\n📦 Loading {len(hf_models)} Hugging Face model(s)...")
                 print(f"   ⚠️  Note: First-time downloads can take 10-30+ minutes (models are 2-14GB each)")
                 print(f"   ⚠️  Subsequent runs will be much faster (models are cached locally)")
+                print(f"   💡 Tip: Press Ctrl+C to skip remaining models and continue with loaded ones")
                 print()
+                
+                # Suppress transformers and huggingface_hub progress bars
+                # Set these before any HF operations to prevent progress bar conflicts
+                os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
+                os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
+                # Also suppress tqdm in transformers if available
+                try:
+                    from transformers.utils import logging
+                    logging.set_verbosity_error()
+                except (ImportError, AttributeError):
+                    pass
+                
+                pbar = tqdm(total=len(hf_models), desc="   Loading HF models", unit="model", ncols=100, 
+                           bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
+                
                 for idx, model in enumerate(hf_models, 1):
                     try:
-                        print(f"   [{idx}/{len(hf_models)}] ⏳ Loading {model}...", flush=True)
-                        
                         # Extract model name (remove 'hf:' prefix if present)
                         hf_model_name = model.replace('hf:', '', 1)
                         
                         # Check if it's a shortcut
                         if RECOMMENDED_MODELS and hf_model_name in RECOMMENDED_MODELS:
                             hf_model_name = RECOMMENDED_MODELS[hf_model_name]
-                            print(f"       📦 Using: {hf_model_name}")
+                            pbar.set_description(f"   [{idx}/{len(hf_models)}] 📦 {model}")
+                        else:
+                            pbar.set_description(f"   [{idx}/{len(hf_models)}] ⏳ {model}")
                         
+                        # Load model with quiet mode to avoid output conflicts
                         hf_analyzer = HuggingFaceAnalyzer(
                             model_name=hf_model_name,
-                            use_gpu=self.use_gpu
+                            use_gpu=self.use_gpu,
+                            quiet=True  # Suppress HF library messages
                         )
+                        
                         # Only add if model actually loaded successfully
                         if hf_analyzer.is_loaded:
                             self.analyzers[model] = hf_analyzer
-                            print(f"       ✅ Successfully loaded")
+                            pbar.write(f"       ✅ Successfully loaded {model}")
                         else:
-                            print(f"       ❌ Failed to load")
+                            pbar.write(f"       ❌ Failed to load {model} (will skip this model)")
+                        
+                        pbar.update(1)
+                    except KeyboardInterrupt:
+                        pbar.write(f"\n       ⚠️  Loading interrupted by user. Continuing with models loaded so far...")
+                        break
                     except Exception as e:
-                        print(f"       ❌ Error: {str(e)[:150]}")
+                        error_msg = str(e)[:150]
+                        pbar.write(f"       ❌ {model}: {error_msg}")
+                        if "gated" in error_msg.lower() or "401" in error_msg or "authentication" in error_msg.lower():
+                            pbar.write(f"       💡 This model requires Hugging Face authentication. Run: huggingface-cli login")
+                        pbar.update(1)
+                
+                pbar.close()
+                
+                # Restore transformers verbosity
+                if 'TRANSFORMERS_VERBOSITY' in os.environ:
+                    del os.environ['TRANSFORMERS_VERBOSITY']
+                if 'HF_HUB_DISABLE_PROGRESS_BARS' in os.environ:
+                    del os.environ['HF_HUB_DISABLE_PROGRESS_BARS']
         
-        print()
+        init_time = time.time() - init_start
         
         # Final summary
-        print(f"\n📊 Successfully initialized {len(self.analyzers)}/{len(models)} models")
+        print(f"\n📊 Successfully initialized {len(self.analyzers)}/{len(models)} models in {init_time:.1f}s")
         if len(self.analyzers) == 0:
             print("❌ Error: No models were successfully initialized!")
             print("   For Hugging Face models requiring authentication, run: huggingface-cli login")
@@ -206,20 +314,32 @@ class MultiAIAnalyzer:
         """
         results = {}
         
-        # Analyze with each AI model in parallel
-        with ThreadPoolExecutor(max_workers=len(self.analyzers)) as executor:
-            futures = {
-                executor.submit(
-                    analyzer.analyze_stock,
-                    ticker, stock_info, technical_signals, price_data_summary
-                ): model_name
-                for model_name, analyzer in self.analyzers.items()
-            }
-            
-            for future in as_completed(futures):
-                model_name = futures[future]
+        if self.parallel_models and len(self.analyzers) > 1:
+            # Analyze with each AI model in parallel
+            with ThreadPoolExecutor(max_workers=len(self.analyzers)) as executor:
+                futures = {
+                    executor.submit(
+                        analyzer.analyze_stock,
+                        ticker, stock_info, technical_signals, price_data_summary
+                    ): model_name
+                    for model_name, analyzer in self.analyzers.items()
+                }
+                
+                for future in as_completed(futures):
+                    model_name = futures[future]
+                    try:
+                        result = future.result()
+                        results[model_name] = result
+                    except Exception as e:
+                        print(f"⚠️ Error with {model_name}: {e}")
+                        results[model_name] = None
+        else:
+            # Sequential analysis to reduce resource usage
+            for model_name, analyzer in self.analyzers.items():
                 try:
-                    result = future.result()
+                    result = analyzer.analyze_stock(
+                        ticker, stock_info, technical_signals, price_data_summary
+                    )
                     results[model_name] = result
                 except Exception as e:
                     print(f"⚠️ Error with {model_name}: {e}")
@@ -546,7 +666,8 @@ def scan_multi_ai(
     period: str = "3mo",
     interval: str = "1d",
     models: List[str] = None,
-    use_gpu: bool = False
+    use_gpu: bool = False,
+    parallel_models: bool = True
 ) -> List[Dict]:
     """
     Scan stocks using multiple AI models in parallel
@@ -560,10 +681,12 @@ def scan_multi_ai(
         interval: Data interval
         models: List of AI models to use (OpenAI or Hugging Face)
         use_gpu: Whether to use GPU for Hugging Face models
+        parallel_models: Run AI models in parallel (True) or sequentially (False)
     
     Returns:
         List of high-confidence buy recommendations with multi-AI consensus
     """
+    scan_start = time.time()
     print("=" * 80)
     print(f"🤖 MULTI-AI ENSEMBLE SCANNER")
     print("=" * 80)
@@ -577,9 +700,10 @@ def scan_multi_ai(
     print()
     
     # Initialize multi-AI analyzer
-    multi_ai = MultiAIAnalyzer(models=models, use_gpu=use_gpu)
+    multi_ai = MultiAIAnalyzer(models=models, use_gpu=use_gpu, parallel_models=parallel_models)
     
     # Fetch stock data
+    fetch_start = time.time()
     print("📊 Fetching stock data...")
     if tickers:
         stocks_data = fetch_multiple_stocks(tickers, period, interval)
@@ -591,32 +715,36 @@ def scan_multi_ai(
         else:
             stocks_data = get_all_stocks(period, interval)
     
-    print(f"✅ Fetched data for {len(stocks_data)} stocks\n")
+    fetch_time = time.time() - fetch_start
+    print(f"✅ Fetched data for {len(stocks_data)} stocks in {fetch_time:.2f}s\n")
     
     if not stocks_data:
         return []
     
     # Get stock info and calculate indicators
     print("🔧 Calculating technical indicators...")
+    prep_start = time.time()
     stock_infos = {}
     stocks_with_indicators = {}
     technical_signals = {}
     
-    for ticker, df in stocks_data.items():
+    for ticker, df in tqdm(stocks_data.items(), desc="   Processing stocks", unit="stock", ncols=100):
         stock_infos[ticker] = get_stock_info(ticker)
         df_indicators = calculate_all_indicators(df)
         stocks_with_indicators[ticker] = df_indicators
         technical_signals[ticker] = get_current_signals(df_indicators)
         time.sleep(0.1)  # Rate limiting
     
-    print(f"✅ Prepared {len(stocks_with_indicators)} stocks for AI analysis\n")
+    prep_time = time.time() - prep_start
+    print(f"✅ Prepared {len(stocks_with_indicators)} stocks for AI analysis in {prep_time:.2f}s\n")
     
     # Analyze each stock with multiple AIs
+    analysis_start = time.time()
     print(f"🤖 Analyzing with {len(multi_ai.analyzers)} AI models in parallel...")
     high_confidence_buys = []
     
-    for i, (ticker, df) in enumerate(stocks_with_indicators.items(), 1):
-        print(f"  [{i}/{len(stocks_with_indicators)}] Analyzing {ticker}...", end=" ")
+    for ticker, df in tqdm(stocks_with_indicators.items(), desc="   AI Analysis", unit="stock", ncols=100):
+        ticker_start = time.time()
         
         stock_info = stock_infos.get(ticker, {})
         signals = technical_signals.get(ticker, {})
@@ -652,7 +780,8 @@ def scan_multi_ai(
         else:
             icon = '🔴'
         
-        print(f"{icon} {recommendation} ({confidence:.1f}%, {agreement:.0f}% consensus)")
+        ticker_time = time.time() - ticker_start
+        tqdm.write(f"   {icon} {ticker}: {recommendation} ({confidence:.1f}%, {agreement:.0f}% consensus) [{ticker_time:.1f}s]")
         
         # Only include if meets criteria
         if recommendation in ['BUY', 'CONSIDER BUY'] and confidence >= min_score and agreement >= min_consensus:
@@ -662,7 +791,10 @@ def scan_multi_ai(
         
         time.sleep(0.2)  # Rate limiting between stocks
     
-    print(f"\n✅ Found {len(high_confidence_buys)} stocks meeting criteria\n")
+    analysis_time = time.time() - analysis_start
+    total_time = time.time() - scan_start
+    print(f"\n✅ Found {len(high_confidence_buys)} stocks meeting criteria")
+    print(f"⏱️  Analysis completed in {analysis_time:.2f}s (Total scan time: {total_time:.2f}s)\n")
     
     return high_confidence_buys
 
@@ -890,6 +1022,11 @@ Examples:
         action='store_true',
         help='Use GPU for Hugging Face models (requires CUDA)'
     )
+    parser.add_argument(
+        '--serial-models',
+        action='store_true',
+        help='Run AI models sequentially instead of in parallel (reduces CPU/RAM load)'
+    )
     
     parser.add_argument(
         '--min-score',
@@ -957,7 +1094,8 @@ Examples:
             period=args.period,
             interval=args.interval,
             models=models,
-            use_gpu=args.use_gpu
+            use_gpu=args.use_gpu,
+            parallel_models=not args.serial_models
         )
         
         display_multi_ai_results(results, args.min_score, args.min_consensus)

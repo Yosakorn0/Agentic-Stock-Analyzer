@@ -5,6 +5,7 @@ An intelligent AI-powered system that scans tech stocks and rising stocks to ide
 ## 🎯 Features
 
 - **AI-Powered Analysis**: Uses OpenAI GPT models to analyze stocks with context-aware reasoning
+- **Multi-AI Ensemble (OpenAI + Hugging Face)**: Optional consensus mode with a lightweight preset to minimize downloads and resource usage
 - **Technical Analysis**: Comprehensive technical indicators (RSI, MACD, EMA, Bollinger Bands, etc.)
 - **Smart Screening**: Filters stocks by tech sector, rising momentum, oversold conditions, and more
 - **Real-Time Scanning**: Scans multiple stocks simultaneously with rate limiting
@@ -23,6 +24,8 @@ An intelligent AI-powered system that scans tech stocks and rising stocks to ide
 ```bash
 pip install -r requirements.txt
 ```
+
+> Tip: The multi-AI ensemble uses a lightweight preset (`open-hf`) with a single Hugging Face model (`hf:mistral-7b`) to minimize downloads and memory.
 
 ### 2. Set OpenAI API Key (Optional but Recommended)
 
@@ -102,6 +105,43 @@ python -m scanners.agentic_scanner --parallel --workers 5
 **Note:** Parallel processing significantly speeds up analysis when scanning many stocks, but uses more API rate limit quota. Use `max_workers` to control concurrency.
 
 **Note**: `stock_scanner.py` is a single combined file with all functionality. Use it if you want everything in one place. The separate files (`agentic_scanner.py`, `ai_analyzer.py`, etc.) are for modular use.
+
+### 4. Multi-AI Ensemble Scanner (Consensus with lightweight HF preset)
+
+Use `multi_ai_scanner.py` to combine multiple AI models. The default `open-hf` preset now uses only one Hugging Face model (`hf:mistral-7b`) to reduce download size and RAM/GPU usage. Add `--serial-models` to run models in series (less CPU/RAM load).
+
+**Low-resource, cached HF model, sequential:**
+```bash
+python multi_ai_scanner.py --preset open-hf --serial-models
+```
+
+**OpenAI-only (no HF downloads):**
+```bash
+python multi_ai_scanner.py --preset openai-only --serial-models
+```
+
+**Explicit single HF model (sequential):**
+```bash
+python multi_ai_scanner.py --models hf:mistral-7b --serial-models
+```
+
+**Enable GPU if available:**
+```bash
+python multi_ai_scanner.py --preset open-hf --use-gpu --serial-models
+```
+
+**Optional: suppress HF progress bars/noise (per session):**
+```bash
+# PowerShell
+$env:HF_HUB_DISABLE_PROGRESS_BARS = "1"
+$env:TRANSFORMERS_VERBOSITY = "error"
+$env:TQDM_DISABLE = "1"   # optional
+```
+
+Notes:
+- First HF download can take several minutes; subsequent runs are fast from cache (`~/.cache/huggingface/hub`).
+- If a download appears stuck, press Ctrl+C once and rerun; it will resume from cache.
+- Use `--serial-models` to avoid parallel model loading and lower CPU/RAM/GPU usage.
 
 ## 📊 Usage Examples
 
