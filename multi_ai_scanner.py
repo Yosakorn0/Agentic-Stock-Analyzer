@@ -547,7 +547,7 @@ class MultiAIAnalyzer:
         import gc
         
         cleanup_count = 0
-        for model_name, analyzer in self.analyzers.items():
+        for model_name, analyzer in list(self.analyzers.items()):
             # Only cleanup Hugging Face analyzers (they have the cleanup method)
             if hasattr(analyzer, 'cleanup'):
                 try:
@@ -555,15 +555,29 @@ class MultiAIAnalyzer:
                     cleanup_count += 1
                 except Exception as e:
                     print(f"   ⚠️  Warning: Failed to cleanup {model_name}: {str(e)[:100]}")
+            
+            # Explicitly delete analyzer reference
+            del analyzer
         
         # Clear the analyzers dictionary
         self.analyzers.clear()
         
-        # Force garbage collection
-        gc.collect()
+        # Force multiple garbage collection passes
+        for _ in range(3):
+            gc.collect()
         
         if cleanup_count > 0:
             print(f"   ✅ Cleaned up {cleanup_count} model(s)")
+        
+        # Additional cleanup for PyTorch if available
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+        except:
+            pass
     
     def _calculate_consensus(self, individual_results: Dict, technical_signals: Dict, stock_info: Dict = None) -> Dict:
         """

@@ -143,6 +143,172 @@ Notes:
 - If a download appears stuck, press Ctrl+C once and rerun; it will resume from cache.
 - Use `--serial-models` to avoid parallel model loading and lower CPU/RAM/GPU usage.
 
+## 🎯 Which Scanner Should I Use?
+
+The project includes **four different scanner files**, each designed for different use cases. Here's a comparison to help you choose:
+
+### Scanner Comparison Table
+
+| Feature | `stock_scanner.py` | `my_analysis.py` | `multi_ai_scanner.py` | `high_confidence_scanner.py` |
+|---------|-------------------|------------------|----------------------|------------------------------|
+| **AI Models** | 1 (OpenAI) | None | Multiple (OpenAI + HF) | 1 (OpenAI) |
+| **Stocks Analyzed** | Multiple | 1 | Multiple | Multiple |
+| **Consensus Analysis** | ❌ No | ❌ No | ✅ Yes | ❌ No |
+| **Entry Price Recommendations** | ❌ No | ❌ No | ✅ Yes | ❌ No |
+| **Stop-Loss/Take-Profit** | ❌ No | ❌ No | ✅ Yes | ❌ No |
+| **Agreement Percentage** | ❌ No | ❌ No | ✅ Yes | ❌ No |
+| **Complexity** | Medium | Low | High | Low |
+| **Best For** | Base library | Quick check | Best accuracy | Simple filtering |
+
+### Detailed Scanner Descriptions
+
+#### 1. `stock_scanner.py` - Core Library (All-in-One)
+**Purpose:** Complete standalone scanner with all functionality in one file.
+
+**Features:**
+- ✅ Technical analysis (RSI, MACD, EMA, Bollinger Bands, etc.)
+- ✅ Stock data fetching
+- ✅ Single AI analyzer (OpenAI only)
+- ✅ Stock screening and filtering
+- ✅ Can scan multiple stocks
+- ✅ Can be run standalone or imported
+
+**Use When:**
+- You want a complete solution in one file
+- You need the base functionality for custom scripts
+- You want to build your own tools on top of it
+
+**Usage:**
+```bash
+# Scan all stocks
+python stock_scanner.py
+
+# Focus on tech stocks
+python stock_scanner.py --focus tech
+
+# Scan specific tickers
+python stock_scanner.py --tickers AAPL,MSFT,NVDA
+```
+
+---
+
+#### 2. `my_analysis.py` - Simple Single-Stock Analyzer
+**Purpose:** Quick analysis for one stock at a time.
+
+**Features:**
+- ✅ Prompts for single ticker input
+- ✅ Fetches data and calculates indicators
+- ✅ Prints formatted signals
+- ❌ No AI analysis
+- ❌ Minimal output
+
+**Use When:**
+- You want a quick check on one stock
+- You don't need AI recommendations
+- You just want technical indicators
+
+**Usage:**
+```bash
+python my_analysis.py
+# Then enter: AAPL
+```
+
+---
+
+#### 3. `multi_ai_scanner.py` - Advanced Multi-AI Ensemble Scanner ⭐ **RECOMMENDED**
+**Purpose:** Uses multiple AI models for consensus-based recommendations.
+
+**Features:**
+- ✅ Multiple AI models (OpenAI + Hugging Face)
+- ✅ Consensus from multiple models
+- ✅ Agreement percentages and model breakdowns
+- ✅ Entry price, stop-loss, take-profit recommendations
+- ✅ Risk/reward ratio calculations
+- ✅ Preset model bundles (`openai-only`, `open-hf`, `diversified-6`, etc.)
+- ✅ Parallel or serial execution (`--serial-models`)
+- ✅ Timeout controls for model loading and analysis
+- ✅ Most detailed and accurate output
+
+**Use When:**
+- You want the highest accuracy with multiple AI opinions
+- You need entry price recommendations
+- You want consensus-based decisions
+- You're making actual trading decisions
+
+**Usage:**
+```bash
+# Use lightweight preset with serial execution (recommended)
+python multi_ai_scanner.py --preset open-hf --serial-models
+
+# Scan specific tickers
+python multi_ai_scanner.py --preset open-hf --serial-models --tickers AAPL,MSFT,AVGO
+
+# OpenAI-only (fast, no downloads)
+python multi_ai_scanner.py --preset openai-only
+
+# With GPU (if available)
+python multi_ai_scanner.py --preset open-hf --use-gpu --serial-models
+```
+
+---
+
+#### 4. `high_confidence_scanner.py` - High-Confidence Filter Wrapper
+**Purpose:** Simple wrapper that filters for high-confidence buy opportunities.
+
+**Features:**
+- ✅ Wraps `AgenticStockScanner` from `stock_scanner.py`
+- ✅ Filters for scores ≥ 60 (configurable)
+- ✅ Simpler output format
+- ✅ Single AI model (OpenAI)
+- ✅ Focuses on BUY/CONSIDER BUY recommendations
+
+**Use When:**
+- You want a simple list of high-confidence buys
+- You don't need entry prices or consensus
+- You prefer a cleaner, simpler output
+
+**Usage:**
+```bash
+# Scan with default 60+ score threshold
+python high_confidence_scanner.py
+
+# Higher threshold (70+)
+python high_confidence_scanner.py --min-score 70
+
+# Focus on tech stocks
+python high_confidence_scanner.py --focus tech
+
+# Scan specific tickers
+python high_confidence_scanner.py --tickers AAPL,MSFT,NVDA
+```
+
+---
+
+### Quick Decision Guide
+
+**Choose `multi_ai_scanner.py` if:**
+- ✅ You want the most accurate recommendations
+- ✅ You need entry prices and stop-losses
+- ✅ You want consensus from multiple AIs
+- ✅ You're making trading decisions
+
+**Choose `stock_scanner.py` if:**
+- ✅ You want a complete solution in one file
+- ✅ You're building custom tools
+- ✅ You need the base library functionality
+
+**Choose `high_confidence_scanner.py` if:**
+- ✅ You want a simple high-confidence buy list
+- ✅ You don't need entry prices
+- ✅ You prefer simpler output
+
+**Choose `my_analysis.py` if:**
+- ✅ You just want to check one stock quickly
+- ✅ You don't need AI recommendations
+- ✅ You only want technical indicators
+
+---
+
 ## 📊 Usage Examples
 
 ### Basic Usage

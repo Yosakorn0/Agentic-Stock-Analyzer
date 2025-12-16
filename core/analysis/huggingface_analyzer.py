@@ -511,24 +511,53 @@ RISK_LEVEL: [Low/Medium/High] [/INST]"""
         """Explicitly unload model and free memory"""
         import gc
         
+        # Delete pipeline first
         if self.pipeline is not None:
-            del self.pipeline
+            try:
+                # Clear any internal caches
+                if hasattr(self.pipeline, 'model'):
+                    del self.pipeline.model
+                if hasattr(self.pipeline, 'tokenizer'):
+                    del self.pipeline.tokenizer
+                del self.pipeline
+            except:
+                pass
             self.pipeline = None
         
+        # Delete model
         if self.model is not None:
-            del self.model
+            try:
+                # Move to CPU first if on GPU to free GPU memory
+                if hasattr(self.model, 'cpu'):
+                    self.model = self.model.cpu()
+                del self.model
+            except:
+                pass
             self.model = None
         
+        # Delete tokenizer
         if self.tokenizer is not None:
-            del self.tokenizer
+            try:
+                del self.tokenizer
+            except:
+                pass
             self.tokenizer = None
         
-        # Clear CUDA cache if using GPU
-        if self.use_gpu and torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        # Clear CUDA cache if using GPU (multiple times for better cleanup)
+        if self.use_gpu:
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()  # Wait for all operations to complete
+                    torch.cuda.empty_cache()  # Clear again
+            except:
+                pass
         
-        # Force garbage collection
-        gc.collect()
+        # Force multiple garbage collection passes
+        for _ in range(3):
+            gc.collect()
+        
         self.is_loaded = False
 
 

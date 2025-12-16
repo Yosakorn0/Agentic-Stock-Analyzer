@@ -19,6 +19,13 @@ from .technical_analyzer import (
 
 from .ai_analyzer import StockAIAnalyzer
 
+try:
+    from .ml_analyzer import MLStockAnalyzer
+    ML_AVAILABLE = True
+except ImportError:
+    MLStockAnalyzer = None
+    ML_AVAILABLE = False
+
 __all__ = [
     # Technical analysis
     'calculate_rsi',
@@ -36,5 +43,7 @@ __all__ = [
     'calculate_all_indicators',
     'get_current_signals',
     # AI analysis
-    'StockAIAnalyzer'
+    'StockAIAnalyzer',
+    # ML analysis
+    'MLStockAnalyzer'
 ]
