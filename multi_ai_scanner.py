@@ -21,8 +21,9 @@ import os
 from typing import List, Optional, Dict
 import argparse
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FutureTimeoutError
 import time
+import threading
 
 # Try to import tqdm for progress bars, fallback to simple progress if not available
 try:
@@ -153,9 +154,9 @@ PRESET_MODELS = {
     # OpenAI only (fast setup)
     "openai-only": ["gpt-4o-mini", "gpt-4", "gpt-3.5-turbo"],
     # Open HF models (no authentication required)
-    # Lightweight open models (single HF model to reduce load)
+    # Finance-focused open model (maps via RECOMMENDED_MODELS)
     "open-hf": [
-        "hf:mistral-7b"
+        "hf:finance-chat"
     ],
 }
 
@@ -166,7 +167,7 @@ class MultiAIAnalyzer:
     """
     
     def __init__(self, models: List[str] = None, api_key: Optional[str] = None, use_gpu: bool = False,
-                 parallel_models: bool = True):
+                 parallel_models: bool = True, model_load_timeout: int = 120, analysis_timeout: int = 60):
         """
         Initialize multi-AI analyzer
         
@@ -177,6 +178,9 @@ class MultiAIAnalyzer:
                    Shortcuts: 'hf:mistral-7b', 'hf:llama-2-7b', etc.
             api_key: OpenAI API key (or use OPENAI_API_KEY env var)
             use_gpu: Whether to use GPU for Hugging Face models
+            parallel_models: Run AI models in parallel (True) or sequentially (False)
+            model_load_timeout: Timeout in seconds for loading each Hugging Face model
+            analysis_timeout: Timeout in seconds for each AI analysis call (default: 60)
         """
         if models is None:
             models = ['gpt-4o-mini', 'gpt-4', 'gpt-3.5-turbo']
@@ -186,6 +190,8 @@ class MultiAIAnalyzer:
         self.use_gpu = use_gpu
         self.analyzers = {}
         self.parallel_models = parallel_models
+        self.model_load_timeout = model_load_timeout
+        self.analysis_timeout = analysis_timeout
         
         # Check GPU availability if requested
         if use_gpu:
@@ -242,42 +248,188 @@ class MultiAIAnalyzer:
                 pbar = tqdm(total=len(hf_models), desc="   Loading HF models", unit="model", ncols=100, 
                            bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
                 
-                for idx, model in enumerate(hf_models, 1):
+                # Timeout for model loading (configurable, default 2 minutes)
+                MODEL_LOAD_TIMEOUT = self.model_load_timeout
+                interrupt_flag = threading.Event()
+                
+                def load_model_with_timeout(model_name, hf_model_name, use_gpu, timeout=MODEL_LOAD_TIMEOUT):
+                    """Load model with timeout and progress updates"""
+                    result = {'analyzer': None, 'error': None, 'timeout': False, 'interrupted': False}
+                    loading_started = threading.Event()
+                    
+                    def load_model():
+                        loading_started.set()
+                        try:
+                            result['analyzer'] = HuggingFaceAnalyzer(
+                                model_name=hf_model_name,
+                                use_gpu=use_gpu,
+                                quiet=True
+                            )
+                        except KeyboardInterrupt:
+                            result['interrupted'] = True
+                        except Exception as e:
+                            result['error'] = str(e)
+                    
+                    # Start loading in a thread
+                    load_thread = threading.Thread(target=load_model, daemon=True)
+                    load_thread.start()
+                    
+                    # Wait for loading to actually start
+                    loading_started.wait(timeout=5)
+                    
+                    # Wait with periodic status updates
+                    start_time = time.time()
+                    last_update = start_time
+                    update_interval = 10  # Update every 10 seconds
+                    timeout_warning_shown = False
+                    
+                    while load_thread.is_alive():
+                        # Check for interrupt
+                        if interrupt_flag.is_set():
+                            result['interrupted'] = True
+                            pbar.write(f"       ⚠️  Loading interrupted by user")
+                            return result
+                        
+                        elapsed = time.time() - start_time
+                        
+                        # Show timeout warning at 80% of timeout
+                        if elapsed > timeout * 0.8 and not timeout_warning_shown:
+                            remaining = timeout - elapsed
+                            pbar.write(f"       ⚠️  Warning: {model_name} still loading. Timeout in {remaining:.0f}s...")
+                            timeout_warning_shown = True
+                        
+                        # Check timeout
+                        if elapsed > timeout:
+                            result['timeout'] = True
+                            elapsed_min = int(elapsed // 60)
+                            elapsed_sec = int(elapsed % 60)
+                            pbar.write(f"       ⏱️  TIMEOUT: {model_name} exceeded {timeout//60}min limit ({elapsed_min}m {elapsed_sec}s) - stopping")
+                            # Note: Daemon thread will continue in background, but we're skipping it
+                            return result
+                        
+                        # Periodic status update
+                        if time.time() - last_update >= update_interval:
+                            elapsed_min = int(elapsed // 60)
+                            elapsed_sec = int(elapsed % 60)
+                            remaining_sec = int(timeout - elapsed)
+                            pbar.write(f"       ⏳ Still loading {model_name}... ({elapsed_min}m {elapsed_sec}s / {timeout//60}min timeout, {remaining_sec}s remaining)")
+                            last_update = time.time()
+                        
+                        time.sleep(0.5)  # Check every 0.5 seconds for more responsive interrupts
+                    
+                    # Thread finished, wait for it to complete
+                    load_thread.join(timeout=1)
+                    return result
+                
+                def test_model(analyzer, model_name):
+                    """Test if the loaded model actually works"""
                     try:
-                        # Extract model name (remove 'hf:' prefix if present)
-                        hf_model_name = model.replace('hf:', '', 1)
+                        # Create a simple test prompt
+                        test_prompt = "Analyze AAPL stock. Recommendation: BUY. Confidence: 80"
                         
-                        # Check if it's a shortcut
-                        if RECOMMENDED_MODELS and hf_model_name in RECOMMENDED_MODELS:
-                            hf_model_name = RECOMMENDED_MODELS[hf_model_name]
-                            pbar.set_description(f"   [{idx}/{len(hf_models)}] 📦 {model}")
-                        else:
-                            pbar.set_description(f"   [{idx}/{len(hf_models)}] ⏳ {model}")
-                        
-                        # Load model with quiet mode to avoid output conflicts
-                        hf_analyzer = HuggingFaceAnalyzer(
-                            model_name=hf_model_name,
-                            use_gpu=self.use_gpu,
-                            quiet=True  # Suppress HF library messages
-                        )
-                        
-                        # Only add if model actually loaded successfully
-                        if hf_analyzer.is_loaded:
-                            self.analyzers[model] = hf_analyzer
-                            pbar.write(f"       ✅ Successfully loaded {model}")
-                        else:
-                            pbar.write(f"       ❌ Failed to load {model} (will skip this model)")
-                        
-                        pbar.update(1)
-                    except KeyboardInterrupt:
-                        pbar.write(f"\n       ⚠️  Loading interrupted by user. Continuing with models loaded so far...")
-                        break
+                        # Try to generate a response (quick test)
+                        if analyzer.pipeline:
+                            test_result = analyzer.pipeline(
+                                test_prompt,
+                                max_new_tokens=10,
+                                temperature=0.7,
+                                do_sample=True,
+                                return_full_text=False
+                            )
+                            return True
+                        elif analyzer.model and analyzer.tokenizer:
+                            # Quick tokenization test
+                            test_inputs = analyzer.tokenizer(test_prompt, return_tensors="pt", truncation=True, max_length=50)
+                            return True
+                        return False
                     except Exception as e:
-                        error_msg = str(e)[:150]
-                        pbar.write(f"       ❌ {model}: {error_msg}")
-                        if "gated" in error_msg.lower() or "401" in error_msg or "authentication" in error_msg.lower():
-                            pbar.write(f"       💡 This model requires Hugging Face authentication. Run: huggingface-cli login")
-                        pbar.update(1)
+                        return False
+                
+                # Set up keyboard interrupt handler
+                original_sigint_handler = None
+                try:
+                    import signal
+                    def interrupt_handler(signum, frame):
+                        interrupt_flag.set()
+                        pbar.write(f"\n       ⚠️  Keyboard interrupt detected. Stopping model loading...")
+                    original_sigint_handler = signal.signal(signal.SIGINT, interrupt_handler)
+                except (ImportError, AttributeError, ValueError):
+                    # Windows or signal not available, use try/except instead
+                    pass
+                
+                try:
+                    for idx, model in enumerate(hf_models, 1):
+                        # Check for interrupt before starting next model
+                        if interrupt_flag.is_set():
+                            pbar.write(f"\n       ⚠️  Loading interrupted by user. Continuing with models loaded so far...")
+                            break
+                        
+                        try:
+                            # Extract model name (remove 'hf:' prefix if present)
+                            hf_model_name = model.replace('hf:', '', 1)
+                            
+                            # Check if it's a shortcut
+                            if RECOMMENDED_MODELS and hf_model_name in RECOMMENDED_MODELS:
+                                hf_model_name = RECOMMENDED_MODELS[hf_model_name]
+                                pbar.set_description(f"   [{idx}/{len(hf_models)}] 📦 {model}")
+                            else:
+                                pbar.set_description(f"   [{idx}/{len(hf_models)}] ⏳ {model}")
+                            
+                            # Load model with timeout and progress updates
+                            load_start = time.time()
+                            result = load_model_with_timeout(model, hf_model_name, self.use_gpu, MODEL_LOAD_TIMEOUT)
+                            load_time = time.time() - load_start
+                            
+                            if interrupt_flag.is_set() or result['interrupted']:
+                                pbar.write(f"       ⚠️  Loading {model} interrupted by user")
+                                break
+                            elif result['timeout']:
+                                pbar.write(f"       ⏱️  TIMEOUT REACHED: {model} exceeded {MODEL_LOAD_TIMEOUT//60}min limit - SKIPPING")
+                                pbar.write(f"       💡 Tip: Model may still be downloading. Check your internet connection.")
+                                pbar.write(f"       💡 Tip: For large models, first-time download can take 10-30+ minutes.")
+                                pbar.write(f"       💡 Tip: You can resume later - models are cached after download.")
+                            elif result['error']:
+                                error_msg = result['error'][:150]
+                                pbar.write(f"       ❌ {model}: {error_msg}")
+                                if "gated" in error_msg.lower() or "401" in error_msg or "authentication" in error_msg.lower():
+                                    pbar.write(f"       💡 This model requires Hugging Face authentication. Run: huggingface-cli login")
+                            elif result['analyzer'] and result['analyzer'].is_loaded:
+                                # Test the model; if test fails, keep the model but warn
+                                pbar.write(f"       🧪 Testing {model}...")
+                                try:
+                                    if test_model(result['analyzer'], model):
+                                        self.analyzers[model] = result['analyzer']
+                                        pbar.write(f"       ✅ Successfully loaded and tested {model} ({load_time:.1f}s)")
+                                    else:
+                                        self.analyzers[model] = result['analyzer']
+                                        pbar.write(f"       ⚠️  {model} loaded but test failed - keeping model and proceeding")
+                                except Exception as test_error:
+                                    self.analyzers[model] = result['analyzer']
+                                    pbar.write(f"       ⚠️  {model} test error: {str(test_error)[:100]} - keeping model and proceeding")
+                            else:
+                                pbar.write(f"       ❌ Failed to load {model} (will skip this model)")
+                            
+                            pbar.update(1)
+                        except KeyboardInterrupt:
+                            interrupt_flag.set()
+                            pbar.write(f"\n       ⚠️  Loading interrupted by user. Continuing with models loaded so far...")
+                            break
+                        except Exception as e:
+                            error_msg = str(e)[:150]
+                            pbar.write(f"       ❌ {model}: {error_msg}")
+                            if "gated" in error_msg.lower() or "401" in error_msg or "authentication" in error_msg.lower():
+                                pbar.write(f"       💡 This model requires Hugging Face authentication. Run: huggingface-cli login")
+                            pbar.update(1)
+                except KeyboardInterrupt:
+                    interrupt_flag.set()
+                    pbar.write(f"\n       ⚠️  Loading interrupted by user. Continuing with models loaded so far...")
+                finally:
+                    # Restore original signal handler
+                    if original_sigint_handler is not None:
+                        try:
+                            signal.signal(signal.SIGINT, original_sigint_handler)
+                        except (ImportError, AttributeError, ValueError):
+                            pass
                 
                 pbar.close()
                 
@@ -307,42 +459,78 @@ class MultiAIAnalyzer:
         price_data_summary: Dict
     ) -> Dict:
         """
-        Analyze a stock using multiple AI models in parallel
+        Analyze a stock using multiple AI models in parallel or sequentially with timeout
         
         Returns:
             Dictionary with consensus analysis and individual model results
         """
         results = {}
         
+        def analyze_with_timeout(analyzer, model_name, ticker, stock_info, technical_signals, price_data_summary):
+            """Analyze with timeout using threading"""
+            result_container = {'result': None, 'error': None, 'timeout': False}
+            
+            def analyze():
+                try:
+                    result_container['result'] = analyzer.analyze_stock(
+                        ticker, stock_info, technical_signals, price_data_summary
+                    )
+                except Exception as e:
+                    result_container['error'] = str(e)
+            
+            thread = threading.Thread(target=analyze, daemon=True)
+            thread.start()
+            thread.join(timeout=self.analysis_timeout)
+            
+            if thread.is_alive():
+                result_container['timeout'] = True
+                return None, True  # Timeout occurred
+            
+            if result_container['error']:
+                return None, False  # Error occurred
+            
+            return result_container['result'], False  # Success
+        
         if self.parallel_models and len(self.analyzers) > 1:
-            # Analyze with each AI model in parallel
+            # Analyze with each AI model in parallel with timeout
             with ThreadPoolExecutor(max_workers=len(self.analyzers)) as executor:
                 futures = {
                     executor.submit(
-                        analyzer.analyze_stock,
-                        ticker, stock_info, technical_signals, price_data_summary
+                        analyze_with_timeout,
+                        analyzer, model_name, ticker, stock_info, technical_signals, price_data_summary
                     ): model_name
                     for model_name, analyzer in self.analyzers.items()
                 }
                 
-                for future in as_completed(futures):
+                for future in as_completed(futures, timeout=self.analysis_timeout * len(self.analyzers)):
                     model_name = futures[future]
                     try:
-                        result = future.result()
-                        results[model_name] = result
+                        result, timed_out = future.result(timeout=1)
+                        if timed_out:
+                            tqdm.write(f"   ⏱️  TIMEOUT: {model_name} exceeded {self.analysis_timeout}s limit for {ticker} - skipping")
+                            results[model_name] = None
+                        else:
+                            results[model_name] = result
+                    except FutureTimeoutError:
+                        tqdm.write(f"   ⏱️  TIMEOUT: {model_name} exceeded {self.analysis_timeout}s limit for {ticker} - skipping")
+                        results[model_name] = None
                     except Exception as e:
-                        print(f"⚠️ Error with {model_name}: {e}")
+                        tqdm.write(f"   ⚠️  Error with {model_name} for {ticker}: {str(e)[:100]}")
                         results[model_name] = None
         else:
-            # Sequential analysis to reduce resource usage
+            # Sequential analysis to reduce resource usage (with timeout)
             for model_name, analyzer in self.analyzers.items():
                 try:
-                    result = analyzer.analyze_stock(
-                        ticker, stock_info, technical_signals, price_data_summary
+                    result, timed_out = analyze_with_timeout(
+                        analyzer, model_name, ticker, stock_info, technical_signals, price_data_summary
                     )
-                    results[model_name] = result
+                    if timed_out:
+                        tqdm.write(f"   ⏱️  TIMEOUT: {model_name} exceeded {self.analysis_timeout}s limit for {ticker} - skipping")
+                        results[model_name] = None
+                    else:
+                        results[model_name] = result
                 except Exception as e:
-                    print(f"⚠️ Error with {model_name}: {e}")
+                    tqdm.write(f"   ⚠️  Error with {model_name} for {ticker}: {str(e)[:100]}")
                     results[model_name] = None
         
         # Calculate consensus (with entry price recommendations)
@@ -353,6 +541,29 @@ class MultiAIAnalyzer:
             'consensus': consensus,
             'ticker': ticker
         }
+    
+    def cleanup(self):
+        """Explicitly unload all models and free memory"""
+        import gc
+        
+        cleanup_count = 0
+        for model_name, analyzer in self.analyzers.items():
+            # Only cleanup Hugging Face analyzers (they have the cleanup method)
+            if hasattr(analyzer, 'cleanup'):
+                try:
+                    analyzer.cleanup()
+                    cleanup_count += 1
+                except Exception as e:
+                    print(f"   ⚠️  Warning: Failed to cleanup {model_name}: {str(e)[:100]}")
+        
+        # Clear the analyzers dictionary
+        self.analyzers.clear()
+        
+        # Force garbage collection
+        gc.collect()
+        
+        if cleanup_count > 0:
+            print(f"   ✅ Cleaned up {cleanup_count} model(s)")
     
     def _calculate_consensus(self, individual_results: Dict, technical_signals: Dict, stock_info: Dict = None) -> Dict:
         """
@@ -667,7 +878,9 @@ def scan_multi_ai(
     interval: str = "1d",
     models: List[str] = None,
     use_gpu: bool = False,
-    parallel_models: bool = True
+    parallel_models: bool = True,
+    model_load_timeout: int = 120,
+    analysis_timeout: int = 60
 ) -> List[Dict]:
     """
     Scan stocks using multiple AI models in parallel
@@ -700,7 +913,8 @@ def scan_multi_ai(
     print()
     
     # Initialize multi-AI analyzer
-    multi_ai = MultiAIAnalyzer(models=models, use_gpu=use_gpu, parallel_models=parallel_models)
+    multi_ai = MultiAIAnalyzer(models=models, use_gpu=use_gpu, parallel_models=parallel_models, 
+                              model_load_timeout=model_load_timeout, analysis_timeout=analysis_timeout)
     
     # Fetch stock data
     fetch_start = time.time()
@@ -805,6 +1019,11 @@ def scan_multi_ai(
     total_time = time.time() - scan_start
     print(f"\n✅ Found {len(high_confidence_buys)} stocks meeting criteria")
     print(f"⏱️  Analysis completed in {analysis_time:.2f}s (Total scan time: {total_time:.2f}s)\n")
+    
+    # Cleanup: Free memory from loaded models
+    print("🧹 Cleaning up models and freeing memory...")
+    multi_ai.cleanup()
+    print("✅ Cleanup complete\n")
     
     # Return all results if specific tickers requested, otherwise just high confidence
     return all_results if show_all_analysis else high_confidence_buys
@@ -1062,6 +1281,18 @@ Examples:
         action='store_true',
         help='Run AI models sequentially instead of in parallel (reduces CPU/RAM load)'
     )
+    parser.add_argument(
+        '--model-timeout',
+        type=int,
+        default=120,
+        help='Timeout in seconds for loading each Hugging Face model (default: 120 = 2 minutes)'
+    )
+    parser.add_argument(
+        '--analysis-timeout',
+        type=int,
+        default=60,
+        help='Timeout in seconds for each AI analysis call (default: 60 = 1 minute). Use lower values (30-45s) for faster scans with HF models.'
+    )
     
     parser.add_argument(
         '--min-score',
@@ -1130,7 +1361,9 @@ Examples:
             interval=args.interval,
             models=models,
             use_gpu=args.use_gpu,
-            parallel_models=not args.serial_models
+            parallel_models=not args.serial_models,
+            model_load_timeout=args.model_timeout,
+            analysis_timeout=args.analysis_timeout
         )
         
         display_multi_ai_results(results, args.min_score, args.min_consensus)

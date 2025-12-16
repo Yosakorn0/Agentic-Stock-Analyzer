@@ -131,7 +131,6 @@ class HuggingFaceAnalyzer:
                         "model": self.model_name,
                         "tokenizer": self.model_name,
                         "trust_remote_code": True,
-                        "low_cpu_mem_usage": True,
                     }
                     
                     # Set device and dtype
@@ -148,7 +147,6 @@ class HuggingFaceAnalyzer:
                     "model": self.model_name,
                     "tokenizer": self.model_name,
                     "trust_remote_code": True,
-                    "low_cpu_mem_usage": True,
                 }
                 
                 # Set device and dtype
@@ -182,7 +180,6 @@ class HuggingFaceAnalyzer:
                         
                         model_kwargs = {
                             "trust_remote_code": True,
-                            "low_cpu_mem_usage": True,
                         }
                         
                         # Set device and dtype
@@ -509,6 +506,30 @@ RISK_LEVEL: [Low/Medium/High] [/INST]"""
             'technical_score': technical_score,
             'model_name': self.model_name
         }
+    
+    def cleanup(self):
+        """Explicitly unload model and free memory"""
+        import gc
+        
+        if self.pipeline is not None:
+            del self.pipeline
+            self.pipeline = None
+        
+        if self.model is not None:
+            del self.model
+            self.model = None
+        
+        if self.tokenizer is not None:
+            del self.tokenizer
+            self.tokenizer = None
+        
+        # Clear CUDA cache if using GPU
+        if self.use_gpu and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
+        # Force garbage collection
+        gc.collect()
+        self.is_loaded = False
 
 
 # Recommended models for stock analysis (smaller, faster models)
