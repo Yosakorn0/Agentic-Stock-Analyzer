@@ -1,13 +1,13 @@
 """
-Train ML model and backtest strategy
+Train ML model and backtest strategy for MULTIPLE stocks
 
 This script:
-1. Trains an ML model on historical stock data
-2. Backtests the ML model predictions
-3. Compares performance with technical analysis
+1. Trains an ML model on historical data for a basket of tech stocks
+2. Backtests the ML model predictions across all those stocks
+3. Compares performance with a rule-based technical analysis strategy
 
 Usage:
-    python examples/train_and_backtest.py
+    python examples/train_and_backtest_multi.py
 """
 import sys
 import os
