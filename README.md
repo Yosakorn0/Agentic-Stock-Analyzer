@@ -56,7 +56,7 @@ python stock_scanner.py --focus tech
 # Focus on rising stocks only
 python stock_scanner.py --focus rising
 
-# Show top 20 recommendations
+# Show up to 20 BUY recommendations (if fewer qualify, fewer will be shown)
 python stock_scanner.py --limit 20
 
 # Save results to JSON file
@@ -65,7 +65,7 @@ python stock_scanner.py --save
 
 #### Option B: Modular Files (For Custom Development)
 
-**Standard Version (Sequential Processing):**
+**Standard Version (Sequential / Serial Processing):**
 ```bash
 # Scan all stocks (tech + rising)
 python -m scanners.agentic_scanner
@@ -76,7 +76,7 @@ python -m scanners.agentic_scanner --focus tech
 # Focus on rising stocks only
 python -m scanners.agentic_scanner --focus rising
 
-# Show top 20 recommendations
+# Show up to 20 BUY recommendations (if fewer qualify, fewer will be shown)
 python -m scanners.agentic_scanner --limit 20
 
 # Save results to JSON file
@@ -97,37 +97,43 @@ results = scanner.scan_stocks(focus="all", period="3mo", parallel=True)
 scanner.print_recommendations(limit=10)
 ```
 
-**Or use CLI with parallel flag:**
+**Or use CLI with parallel flag (parallel instead of serial):**
 ```bash
 python -m scanners.agentic_scanner --parallel --workers 5
 ```
 
 **Note:** Parallel processing significantly speeds up analysis when scanning many stocks, but uses more API rate limit quota. Use `max_workers` to control concurrency.
 
-**Note**: `stock_scanner.py` is a single combined file with all functionality. Use it if you want everything in one place. The separate files (`agentic_scanner.py`, `ai_analyzer.py`, etc.) are for modular use.
+**Note**: `stock_scanner.py` is a single combined file with all functionality. Use it if you want everything in one place. The separate files (`agentic_scanner.py`, `ai_analyzer.py`, etc.) are for modular use. By default these run **serially**; enable parallel mode only if you’re comfortable with higher CPU/RAM usage.
 
 ### 4. Multi-AI Ensemble Scanner (Consensus with lightweight HF preset)
 
-Use `multi_ai_scanner.py` to combine multiple AI models. The default `open-hf` preset now uses only one Hugging Face model (`hf:mistral-7b`) to reduce download size and RAM/GPU usage. Add `--serial-models` to run models in series (less CPU/RAM load).
+Use `multi_ai_scanner.py` to combine multiple AI models. The default `open-hf` preset now uses a single finance-tuned Hugging Face model (`hf:finance-chat`) to reduce download size and RAM/GPU usage. Add `--serial-models` to run models in **series** (less CPU/RAM load) instead of in parallel.
 
-**Low-resource, cached HF model, sequential:**
+**Low-resource, cached HF model, serial execution (recommended on low RAM):**
 ```bash
 python multi_ai_scanner.py --preset open-hf --serial-models
 ```
 
-**OpenAI-only (no HF downloads):**
+**OpenAI-only (no HF downloads, serial):**
 ```bash
 python multi_ai_scanner.py --preset openai-only --serial-models
 ```
 
-**Explicit single HF model (sequential):**
+**Explicit single HF model (serial):**
 ```bash
-python multi_ai_scanner.py --models hf:mistral-7b --serial-models
+python multi_ai_scanner.py --models hf:finance-chat --serial-models
 ```
 
-**Enable GPU if available:**
+**Enable GPU if available (still serial models):**
 ```bash
 python multi_ai_scanner.py --preset open-hf --use-gpu --serial-models
+```
+
+**Parallel models (faster but heavier on RAM/CPU):**
+```bash
+python multi_ai_scanner.py --preset open-hf            # parallel by default
+python multi_ai_scanner.py --preset open-hf --parallel-models   # explicit
 ```
 
 **Optional: suppress HF progress bars/noise (per session):**
@@ -141,7 +147,7 @@ $env:TQDM_DISABLE = "1"   # optional
 Notes:
 - First HF download can take several minutes; subsequent runs are fast from cache (`~/.cache/huggingface/hub`).
 - If a download appears stuck, press Ctrl+C once and rerun; it will resume from cache.
-- Use `--serial-models` to avoid parallel model loading and lower CPU/RAM/GPU usage.
+- Use `--serial-models` to avoid parallel model loading and lower CPU/RAM/GPU usage; use parallel mode only if you have enough resources.
 
 ## 🎯 Which Scanner Should I Use?
 
