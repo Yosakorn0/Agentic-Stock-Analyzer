@@ -1,9 +1,7 @@
 """
 Gold Scalping Example - Using AI Stock Scanner for Gold Trading
 
-For scalping gold, you can use:
-- GLD: Gold ETF (most reliable, works 24/7 data)
-- GC=F: Gold Futures (may have market hours restrictions)
+For scalping gold, uses XAUUSD exclusively.
 
 Recommended intervals for scalping:
 - 5m: Very short-term scalping (5-minute candles)
@@ -16,10 +14,12 @@ Run this script:
 
 from core.analysis import get_current_signals, calculate_all_indicators
 from core.data import fetch_stock_data
+from core.data.forex_fetcher import fetch_xauusd_data
 from utils.format_signals import print_signals
 import sys
 import pandas as pd
 from typing import List, Dict
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 def calculate_zone_strength(df: pd.DataFrame, zone_price: float, zone_type: str, tolerance: float = 0.002) -> Dict:
     """
@@ -188,32 +188,71 @@ def find_best_buy_sell_prices(df: pd.DataFrame, signals: Dict, current_price: fl
         'strong_supply_zones': strong_supply_zones[:3]   # Top 3
     }
 
-def gold_scalping(ticker: str = "GLD", interval: str = "5m", period: str = "5d"):
+def gold_scalping(ticker: str = "XAUUSD", interval: str = "5m", period: str = "5d"):
     """
     Run scalping analysis for gold with strong zone identification
     
     Args:
-        ticker: Gold ticker (GLD for ETF, GC=F for futures)
+        ticker: Gold ticker (XAUUSD only)
         interval: Data interval (5m, 15m, 30m for scalping)
         period: Time period (5d for 5m interval, 1mo for longer intervals)
     """
+    # Always use XAUUSD as the display identifier
+    display_ticker = "XAUUSD"
+    
     print("=" * 70)
-    print(f"🥇 GOLD SCALPING ANALYSIS - {ticker}")
+    print(f"🥇 GOLD SCALPING ANALYSIS - {display_ticker}")
     print("=" * 70)
     print(f"Interval: {interval} | Period: {period}")
     print("-" * 70)
     
-    # Fetch intraday data for scalping
-    print(f"\n📊 Fetching {interval} data for {ticker}...")
-    df = fetch_stock_data(ticker, period=period, interval=interval)
+    # Try to fetch XAUUSD data from best available source
+    print(f"\n📊 Fetching {interval} data for {display_ticker} (TradingView > OANDA > Yahoo Finance)...", end=' ', flush=True)
+    
+    df = None
+    working_ticker = None
+    data_source = None
+    
+    try:
+        # Try the new forex fetcher first (TradingView/OANDA)
+        df = fetch_xauusd_data(period=period, interval=interval, timeout=30)
+        if df is not None and not df.empty:
+            data_source = "TradingView/OANDA"
+            working_ticker = display_ticker
+            print(f"✅ Success! (Source: {data_source})")
+        else:
+            # Fallback to Yahoo Finance
+            print("⚠️  (TradingView/OANDA unavailable, trying Yahoo Finance...)", end=' ', flush=True)
+            for fallback_ticker in ["GC=F", "GLD"]:
+                try:
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(fetch_stock_data, fallback_ticker, period, interval)
+                        df = future.result(timeout=30)
+                    
+                    if df is not None and not df.empty:
+                        data_source = f"Yahoo Finance ({fallback_ticker})"
+                        working_ticker = fallback_ticker
+                        print(f"✅ Success! (Source: {data_source})")
+                        break
+                except Exception:
+                    continue
+    except Exception as e:
+        print(f"❌ (failed: {str(e)[:50]})")
     
     if df is None or df.empty:
-        print(f"❌ Error: Could not fetch data for {ticker}")
-        print("\n💡 TIPS:")
-        print("   - Try GLD instead of GC=F")
-        print("   - Check if market is open (for GC=F)")
-        print("   - Try longer period (1mo) or different interval (15m)")
+        print(f"\n❌ Error: Could not fetch data for {display_ticker}")
+        print("\n💡 SETUP OPTIONS:")
+        print("   1. TradingView (Recommended - matches TradingView charts):")
+        print("      pip install pytradingview")
+        print("   2. OANDA API (Free tier, professional data):")
+        print("      - Sign up at https://www.oanda.com/us-en/trading/api/")
+        print("      - Set environment variable: OANDA_API_KEY=your_key")
+        print("   3. See DATA_SOURCES.md for detailed setup instructions")
         return None
+    
+    # Update display if we used a fallback
+    if working_ticker != display_ticker:
+        print(f"   Using {working_ticker} as data source for {display_ticker}")
     
     print(f"✅ Fetched {len(df)} candles ({interval} interval)")
     print(f"📅 Date range: {df.index[0]} to {df.index[-1]}")
@@ -381,15 +420,13 @@ def gold_scalping(ticker: str = "GLD", interval: str = "5m", period: str = "5d")
     return signals
 
 if __name__ == "__main__":
-    # Get user input
+    # Fixed setup for XAUUSD scalping
+    # Uses XAUUSD exclusively
     print("🥇 Gold Scalping Setup")
     print("-" * 70)
-    
-    # Ticker selection
-    ticker_choice = input("Enter gold ticker [GLD] (or GC=F): ").strip().upper()
-    if not ticker_choice:
-        ticker_choice = "GLD"
-    
+    print("Using XAUUSD exclusively")
+    ticker_choice = "XAUUSD"
+
     # Interval selection
     print("\nSelect interval:")
     print("  1. 5m  (very short-term scalping)")
