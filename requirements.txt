@@ -14,3 +14,9 @@ requests>=2.28.0
 # Sign up at https://www.oanda.com/us-en/trading/api/
 # Set OANDA_API_KEY environment variable
 
+# Optional: For news and sentiment analysis
+# pip install newsapi-python textblob
+
+# Optional: For enhanced sentiment analysis
+# pip install vaderSentiment
+

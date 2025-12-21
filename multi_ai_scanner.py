@@ -116,6 +116,11 @@ except ImportError:
     from core.analysis.technical_analyzer import calculate_all_indicators, get_current_signals
     from core.data.stock_fetcher import get_stock_info
 
+# Import new analysis modules
+from core.analysis.news_analyzer import get_news_sentiment_summary
+from core.data.fundamentals_fetcher import get_enhanced_fundamentals
+from core.analysis.agentic_supervisor import AgenticSupervisor
+
 # Import Hugging Face analyzer (lazy import to avoid slow startup)
 HUGGINGFACE_ANALYZER_AVAILABLE = None
 HuggingFaceAnalyzer = None
@@ -167,7 +172,8 @@ class MultiAIAnalyzer:
     """
     
     def __init__(self, models: List[str] = None, api_key: Optional[str] = None, use_gpu: bool = False,
-                 parallel_models: bool = True, model_load_timeout: int = 120, analysis_timeout: int = 60):
+                 parallel_models: bool = True, model_load_timeout: int = 120, analysis_timeout: int = 60,
+                 enable_supervisor: bool = True):
         """
         Initialize multi-AI analyzer
         
@@ -181,6 +187,7 @@ class MultiAIAnalyzer:
             parallel_models: Run AI models in parallel (True) or sequentially (False)
             model_load_timeout: Timeout in seconds for loading each Hugging Face model
             analysis_timeout: Timeout in seconds for each AI analysis call (default: 60)
+            enable_supervisor: Enable agentic supervisor to evaluate AI predictions (default: True)
         """
         if models is None:
             models = ['gpt-4o-mini', 'gpt-4', 'gpt-3.5-turbo']
@@ -192,6 +199,16 @@ class MultiAIAnalyzer:
         self.parallel_models = parallel_models
         self.model_load_timeout = model_load_timeout
         self.analysis_timeout = analysis_timeout
+        self.enable_supervisor = enable_supervisor
+        
+        # Initialize agentic supervisor if enabled
+        self.supervisor = None
+        if enable_supervisor:
+            try:
+                self.supervisor = AgenticSupervisor(api_key=self.api_key)
+            except Exception as e:
+                print(f"⚠️  Warning: Could not initialize agentic supervisor: {str(e)[:100]}")
+                self.supervisor = None
         
         # Check GPU availability if requested
         if use_gpu:
@@ -456,13 +473,23 @@ class MultiAIAnalyzer:
         ticker: str,
         stock_info: Dict,
         technical_signals: Dict,
-        price_data_summary: Dict
+        price_data_summary: Dict,
+        news_sentiment: Optional[Dict] = None,
+        fundamentals: Optional[Dict] = None
     ) -> Dict:
         """
         Analyze a stock using multiple AI models in parallel or sequentially with timeout
         
+        Args:
+            ticker: Stock ticker
+            stock_info: Basic stock information
+            technical_signals: Technical analysis signals
+            price_data_summary: Price change summary
+            news_sentiment: News sentiment analysis (optional, will fetch if None)
+            fundamentals: Enhanced fundamentals (optional, will fetch if None)
+        
         Returns:
-            Dictionary with consensus analysis and individual model results
+            Dictionary with consensus analysis, individual model results, and supervisor evaluation
         """
         results = {}
         
@@ -533,12 +560,52 @@ class MultiAIAnalyzer:
                     tqdm.write(f"   ⚠️  Error with {model_name} for {ticker}: {str(e)[:100]}")
                     results[model_name] = None
         
+        # Fetch news sentiment and fundamentals if not provided
+        if news_sentiment is None:
+            try:
+                news_sentiment = get_news_sentiment_summary(ticker, days=7, timeout=15)
+            except Exception as e:
+                news_sentiment = {'news_count': 0, 'avg_sentiment': 0.0, 'sentiment_label': 'neutral', 'impact_score': 0.0}
+        
+        if fundamentals is None:
+            try:
+                fundamentals = get_enhanced_fundamentals(ticker, timeout=15)
+            except Exception as e:
+                fundamentals = {}
+        
         # Calculate consensus (with entry price recommendations)
         consensus = self._calculate_consensus(results, technical_signals, stock_info)
+        
+        # Agentic supervisor evaluation
+        supervisor_evaluation = None
+        if self.supervisor:
+            try:
+                supervisor_evaluation = self.supervisor.evaluate_ai_predictions(
+                    ticker=ticker,
+                    individual_results=results,
+                    consensus=consensus,
+                    technical_signals=technical_signals,
+                    news_sentiment=news_sentiment,
+                    fundamentals=fundamentals,
+                    stock_info=stock_info
+                )
+                
+                # Override consensus with supervisor's final recommendation if supervisor is confident
+                if supervisor_evaluation and supervisor_evaluation.get('supervisor_confidence', 0) >= 70:
+                    consensus['supervisor_override'] = True
+                    consensus['original_recommendation'] = consensus['recommendation']
+                    consensus['original_confidence'] = consensus['confidence']
+                    consensus['recommendation'] = supervisor_evaluation.get('final_recommendation', consensus['recommendation'])
+                    consensus['confidence'] = supervisor_evaluation.get('final_confidence', consensus['confidence'])
+            except Exception as e:
+                tqdm.write(f"   ⚠️  Supervisor evaluation failed for {ticker}: {str(e)[:100]}")
         
         return {
             'individual_results': results,
             'consensus': consensus,
+            'supervisor_evaluation': supervisor_evaluation,
+            'news_sentiment': news_sentiment,
+            'fundamentals': fundamentals,
             'ticker': ticker
         }
     
@@ -926,9 +993,10 @@ def scan_multi_ai(
     print("=" * 80)
     print()
     
-    # Initialize multi-AI analyzer
+    # Initialize multi-AI analyzer (with supervisor enabled by default)
     multi_ai = MultiAIAnalyzer(models=models, use_gpu=use_gpu, parallel_models=parallel_models, 
-                              model_load_timeout=model_load_timeout, analysis_timeout=analysis_timeout)
+                              model_load_timeout=model_load_timeout, analysis_timeout=analysis_timeout,
+                              enable_supervisor=True)
     
     # Fetch stock data
     fetch_start = time.time()
@@ -987,12 +1055,24 @@ def scan_multi_ai(
             'price_change_20d': signals.get('price_change_20d', 0),
         }
         
+        # Fetch news sentiment and fundamentals in parallel (optional, will be fetched in analyze_stock_multi_ai if None)
+        news_sentiment = None
+        fundamentals = None
+        # Uncomment to pre-fetch (adds time but provides data earlier):
+        # try:
+        #     news_sentiment = get_news_sentiment_summary(ticker, days=7, timeout=10)
+        #     fundamentals = get_enhanced_fundamentals(ticker, timeout=10)
+        # except:
+        #     pass
+        
         # Multi-AI analysis (pass stock_info for entry price calculation)
         result = multi_ai.analyze_stock_multi_ai(
             ticker=ticker,
             stock_info=stock_info,
             technical_signals=signals,
-            price_data_summary=price_summary
+            price_data_summary=price_summary,
+            news_sentiment=news_sentiment,
+            fundamentals=fundamentals
         )
         
         consensus = result['consensus']
@@ -1142,13 +1222,71 @@ def display_multi_ai_results(results: List[Dict], min_score: int, min_consensus:
             icon = "🔴"
             quality = "VERY LOW CONFIDENCE"
         
+        # Get new data
+        news_sentiment = result.get('news_sentiment', {})
+        fundamentals = result.get('fundamentals', {})
+        supervisor_eval = result.get('supervisor_evaluation')
+        
         print(f"{i}. {icon} {ticker} - {name}")
         print(f"   Sector: {sector}")
+        
+        # Show supervisor override if present
+        if consensus.get('supervisor_override'):
+            print(f"   🤖 SUPERVISOR OVERRIDE: Changed from {consensus.get('original_recommendation')} ({consensus.get('original_confidence')}%)")
+        
         print(f"   📊 CONSENSUS: {recommendation} | Score: {confidence:.1f}% ({quality})")
         print(f"   🤝 Agreement: {agreement:.1f}% | Models Analyzed: {models_analyzed}")
         print(f"   💰 Price: ${price:,.2f} | Change 5d: {change_5d:+.2f}%")
         print(f"   📈 Trend: {trend.upper()} | RSI: {rsi:.1f} | Technical Score: {technical_score:.1f}")
         print(f"   ⚠️  Risk: {risk} | 📈 Potential: {upside}")
+        
+        # News & Sentiment
+        if news_sentiment and news_sentiment.get('news_count', 0) > 0:
+            sentiment_label = news_sentiment.get('sentiment_label', 'neutral')
+            impact_score = news_sentiment.get('impact_score', 0)
+            news_count = news_sentiment.get('news_count', 0)
+            sentiment_icon = "🟢" if sentiment_label == 'positive' else ("🔴" if sentiment_label == 'negative' else "🟡")
+            print(f"   📰 News ({news_count} articles): {sentiment_icon} {sentiment_label.upper()} (Impact: {impact_score:.1f}/100)")
+        
+        # Fundamentals summary
+        if fundamentals:
+            pe_ratio = fundamentals.get('pe_ratio')
+            revenue_growth = fundamentals.get('revenue_growth_yoy')
+            earnings_growth = fundamentals.get('earnings_growth_yoy')
+            debt_to_equity = fundamentals.get('debt_to_equity')
+            
+            fund_summary = []
+            if pe_ratio:
+                fund_summary.append(f"P/E: {pe_ratio:.1f}")
+            if revenue_growth is not None:
+                fund_summary.append(f"Rev Growth: {revenue_growth:+.1f}%")
+            if earnings_growth is not None:
+                fund_summary.append(f"EPS Growth: {earnings_growth:+.1f}%")
+            if debt_to_equity is not None:
+                fund_summary.append(f"D/E: {debt_to_equity:.1f}%")
+            
+            if fund_summary:
+                print(f"   💼 Fundamentals: {' | '.join(fund_summary)}")
+        
+        # Supervisor evaluation
+        if supervisor_eval:
+            contradictions = supervisor_eval.get('contradictions', [])
+            risk_flags = supervisor_eval.get('risk_flags', [])
+            supervisor_conf = supervisor_eval.get('supervisor_confidence', 0)
+            
+            if contradictions:
+                print(f"   ⚠️  CONTRADICTIONS: {len(contradictions)} issue(s) detected")
+                for cont in contradictions[:2]:  # Show first 2
+                    print(f"      • {cont[:80]}")
+            
+            if risk_flags:
+                print(f"   🚩 RISK FLAGS: {len(risk_flags)} warning(s)")
+                for flag in risk_flags[:2]:  # Show first 2
+                    print(f"      • {flag[:80]}")
+            
+            if supervisor_eval.get('supervisor_recommendation'):
+                print(f"   🤖 Supervisor: {supervisor_eval.get('supervisor_recommendation')} ({supervisor_conf:.1f}%)")
+        
         print(f"   📝 Reasoning: {reasoning[:250]}..." if len(reasoning) > 250 else f"   📝 Reasoning: {reasoning}")
         
         # Always display entry price recommendations (especially important for WAIT recommendations)

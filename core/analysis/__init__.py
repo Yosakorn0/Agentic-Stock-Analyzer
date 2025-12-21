@@ -26,6 +26,9 @@ except ImportError:
     MLStockAnalyzer = None
     ML_AVAILABLE = False
 
+from .news_analyzer import get_news_sentiment_summary, fetch_stock_news, analyze_sentiment
+from .agentic_supervisor import AgenticSupervisor
+
 __all__ = [
     # Technical analysis
     'calculate_rsi',
@@ -45,5 +48,11 @@ __all__ = [
     # AI analysis
     'StockAIAnalyzer',
     # ML analysis
-    'MLStockAnalyzer'
+    'MLStockAnalyzer',
+    # News & Sentiment
+    'get_news_sentiment_summary',
+    'fetch_stock_news',
+    'analyze_sentiment',
+    # Agentic Supervisor
+    'AgenticSupervisor'
 ]
